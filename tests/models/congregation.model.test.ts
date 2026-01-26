@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { CongregationSettingsServerUpdate } from '../../src/types/index.js';
+import {
+  CongregationChange,
+  CongregationPersonUpdate,
+  CongregationSettingsServerUpdate,
+} from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
 
@@ -35,6 +39,15 @@ describe('Congregation Model', () => {
 
     // Setup base S3 mocks
     (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
+      if (key.includes('settings.json')) {
+        return JSON.stringify({
+          cong_name: 'New Congregation Name',
+          country_code: 'MDG',
+          cong_prefix: 'ABCDEFGHIJ',
+          country_guid: '1234567890',
+        });
+      }
+
       if (key.includes('mutations.json') || key.includes('persons.json')) {
         return JSON.stringify([]);
       }
@@ -51,22 +64,12 @@ describe('Congregation Model', () => {
       await congregation.load(); // ETag is 'v0' after load
 
       const serverPatch: CongregationSettingsServerUpdate = {
-        cong_name: 'New Congregation Name',
-        country_code: 'MDG',
-        cong_prefix: 'ABCDEFGHIJ',
-        country_guid: '1234567890',
+        cong_name: 'Updated Congregation Name',
       };
 
       await congregation.applyServerSettingsPatch(serverPatch);
 
-      expect(congregation.settings!.cong_name).toBe(serverPatch.cong_name);
-      expect(congregation.settings!.country_code).toBe(
-        serverPatch.country_code
-      );
-      expect(congregation.settings!.cong_prefix).toBe(serverPatch.cong_prefix);
-      expect(congregation.settings!.country_guid).toBe(
-        serverPatch.country_guid
-      );
+      expect(congregation.settings.cong_name).toBe(serverPatch.cong_name);
 
       const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
 
@@ -79,6 +82,83 @@ describe('Congregation Model', () => {
       expect(settingsCall).toBeDefined();
 
       expect(congregation.ETag).toBe('v0'); // ETag should remain unchanged
+    });
+  });
+
+  // --- CORE ENGINE TESTS ---
+  describe('applyBatchedChanges (Engine)', () => {
+    // Clear mock calls to s3Service.uploadFile before starting the batched changes
+    beforeEach(() => {
+      (s3Service.uploadFile as Mock).mockClear();
+    });
+
+    it('should process multiple scopes in one S3 transaction', async () => {
+      await congregation.load();
+
+      const batch: CongregationChange['changes'] = [
+        {
+          scope: 'settings',
+          patch: {
+            data_sync: { value: true, updatedAt: '2026-01-26T00:00:00Z' },
+          },
+        },
+        {
+          scope: 'persons',
+          patch: {
+            person_uid: 'person-1',
+            person_firstname: {
+              value: 'Jane',
+              updatedAt: '2026-01-26T12:00:00Z',
+            },
+          },
+        },
+      ];
+
+      await congregation.applyBatchedChanges(batch);
+
+      // Verify state updates
+      expect(congregation.settings).toHaveProperty('data_sync');
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      // Verify SaveWithHistory orchestration
+      // 1. Mutations, 2. ETag, 3. Settings, 4. Persons
+      expect(uploadFileCalls).toHaveLength(4);
+
+      const settingsCall = uploadFileCalls.find((call) =>
+        call[0].includes('settings.json')
+      );
+
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      const personsCall = uploadFileCalls.find((call) =>
+        call[0].includes('persons.json')
+      );
+
+      expect(mutationCall).toBeDefined();
+      expect(settingsCall).toBeDefined();
+      expect(personsCall).toBeDefined();
+
+      expect(congregation.ETag).toBe('v1');
+    });
+  });
+
+  // --- CONVENIENCE WRAPPER TESTS ---
+  describe('Convenience Wrappers (Plumbing)', () => {
+    it('applyPersonPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongregationPersonUpdate = {
+        person_uid: 'person-1',
+        person_firstname: { value: 'John', updatedAt: '2026-01-26T12:00:00Z' },
+        person_lastname: { value: 'Doe', updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await congregation.applyPersonPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([{ scope: 'persons', patch }]);
     });
   });
 });

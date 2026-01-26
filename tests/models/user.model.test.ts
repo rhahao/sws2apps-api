@@ -103,6 +103,11 @@ describe('User Model', () => {
 
   // --- CORE ENGINE TESTS ---
   describe('applyBatchedChanges (Engine)', () => {
+    // Clear mock calls to s3Service.uploadFile before starting the batched changes
+    beforeEach(() => {
+      (s3Service.uploadFile as Mock).mockClear();
+    });
+
     it('should process multiple scopes in one S3 transaction', async () => {
       await user.load();
 

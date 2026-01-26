@@ -317,14 +317,15 @@ export class Congregation {
           const personIndex = finalPersons.findIndex(
             (p) => p.person_uid === personUid
           );
-          let currentPerson: Partial<CongregationPerson>;
+
+          let currentPerson: CongregationPersonUpdate;
 
           if (personIndex !== -1) {
             currentPerson = finalPersons[personIndex];
           } else {
             currentPerson = {
               person_uid: personUid,
-            } as Partial<CongregationPerson>;
+            } as CongregationPersonUpdate;
           }
 
           const { merged, hasChanges } = applyDeepSyncPatch(
@@ -338,6 +339,7 @@ export class Congregation {
             } else {
               finalPersons.push(merged as CongregationPerson);
             }
+
             recordedMutations.push({ scope: 'persons', patch });
             hasGlobalChanges = true;
           }
@@ -365,6 +367,7 @@ export class Congregation {
         }
         if (finalSettings) {
           scopesToSave.push({ scope: 'settings', data: finalSettings });
+          this._settings = finalSettings; // Update internal state
         }
 
         // Pass structured payload to orchestrator

@@ -85,7 +85,9 @@ export interface CongregationPerson {
   family_members: { head: string; members: string; updatedAt: string };
 }
 
-export type CongregationPersonUpdate = DeepPartial<CongregationPerson>;
+export type CongregationPersonUpdate = DeepPartial<CongregationPerson> & {
+  person_uid: string;
+};
 
 export interface CongregationSettingsServer {
   country_code: string;
