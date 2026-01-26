@@ -1,0 +1,20 @@
+{
+	"tr_welcomeTitle": "Dobrodošel v aplikaciji Organized!",
+	"tr_welcomeDesc": "Hvala za registracijo! Veseli nas, da boš lahko raziskal Organized. Oglej si ta predstavitveni videoposnetek, da začneš uporabljati aplikacijo in si olajšaš organizacijo vseh svojih teokratičnih dejavnosti:",
+	"tr_watchVideoLabel": "Oglej si video na YouTubu",
+	"tr_moreInfoTitle": "Več informacij o aplikaciji:",
+	"tr_moreInfoGuideLabel": "<a class='h4' target='_blank' rel='noreferrer' href='https://guide.organized-app.com'>Uporabniški priročnik</a> z navodili po posameznih korakih",
+	"tr_moreInfoBlogLabel": "<a class='h4' target='_blank' rel='noreferrer' href='https://guide.organized-app.com/blog'>Naš blog</a> z nasveti in uporabnimi funkcijami",
+	"tr_moreInfoSupportLabel": "<a class='h4' target='_blank' rel='noreferrer' href='https://guide.organized-app.com/how-to-support/'>Podpri aplikacijo</a> z donacijo za njen razvoj",
+	"tr_login": "Prijavi se v svoj račun Organized",
+	"tr_loginDesc": "Prejeli smo zahtevo za prijavo s tvojim e-poštnim naslovom. Prosimo, potrdi prijavo s klikom na spodnji gumb.",
+	"tr_loginBtn": "Prijavi se v Organized",
+	"tr_loginAltText": "Če ti zgornji gumb za prijavo ne deluje, uporabi naslednjo povezavo. Pri kopiranju pazi, da boš kopiral celotno povezavo:",
+	"tr_loginIgnoreText": "Če te povezave nisi zahteval, tega e-poštnega sporočila ne upoštevaj.",
+	"tr_joinRequestApprovedSubject": "Odobritev za pridružitev občini {{ congregation }}",
+	"tr_joinRequestApprovedTitle": "Tvoja prošnja je bila odobrena",
+	"tr_joinRequestApprovedDesc": "Občina <strong>{{ congregation }}</strong> je odobrila tvojo prošnjo za pridružitev. Aplikacijo Organized lahko odpreš na <a href='{{ url }}'>{{ url }}</a> in se prijaviš.",
+	"tr_greetings": "Zdravo {{ name }}!",
+	"tr_loginOTP": "Uporabiš lahko tudi to potrditveno kodo:",
+	"tr_loginOTPDuration": "Ta potrditvena koda je veljavna pet minut."
+}

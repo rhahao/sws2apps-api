@@ -1,5 +1,6 @@
 {
-	"execMap": {
-		"ts": "tsx"
-	}
+	"ignore": ["src/**/*.spec.ts"],
+	"exec": "tsx",
+	"delay": 2500,
+	"env": { "NODE_ENV": "development" }
 }

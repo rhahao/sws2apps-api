@@ -1,54 +1,34 @@
-import 'dotenv/config';
-import { LogLevel } from '@logtail/types';
+import dotenv from 'dotenv';
+import { logger } from './utils/index.js';
+import { initializeStorage, initI18n, appService } from './services/index.js';
+import { initializeFirebaseAdmin } from './config/index.js'; // New import
+import { createApp } from './app.js';
 
-import app from './app.js';
+// Load environment variables
+dotenv.config();
 
-import { logger } from './v3/services/logger/logger.js';
-import { ServerTempVariableType } from './v3/definition/server.js';
-import { BackupForStorage } from './v3/definition/congregation.js';
-import { UsersList } from './v3/classes/Users.js';
-import { CongregationsList } from './v3/classes/Congregations.js';
-import { Flags } from './v3/classes/Flags.js';
-import { Installation } from './v3/classes/Installation.js';
-import { initializeAPI } from './v3/config/app.db_config.js';
-import { createDevTestUsers } from './v3/config/dev.config.js';
+// Initialize logger with config - NO LONGER NEEDED as logger initializes directly
 
 const PORT = process.env.PORT || 8000;
-const APP_VERSION = process.env.npm_package_version;
+const app = createApp();
 
-export const API_VAR: ServerTempVariableType = {
-	MINIMUM_APP_VERSION: '',
-	IS_SERVER_READY: false,
-	REQUEST_TRACKER: [],
-};
-
-export const backupUploadsInProgress = new Map<string, BackupForStorage>();
-
-await initializeAPI();
-await createDevTestUsers();
-
-logger(LogLevel.Info, `minimum frontend client version set to ${API_VAR.MINIMUM_APP_VERSION}`);
-
+// Start server immediately (Non-blocking)
 app.listen(PORT, async () => {
-	logger(LogLevel.Info, `server up and running on port ${PORT} (v${APP_VERSION})`);
+  logger.info(`🚀 Server is running on port ${PORT}`);
 
-	const start = performance.now();
+  try {
+    // 1. Initialize i18n
+    await initI18n();
 
-	logger(LogLevel.Info, `loading firebase data`, { service: 'firebase' });
+    // 2. Initialize Firebase Admin
+    initializeFirebaseAdmin();
 
-	await UsersList.load();
-	await CongregationsList.load();
-	await CongregationsList.cleanupTasks();
-	await Flags.load();
-	await Installation.load();
+    // 3. Perform background storage initialization
+    await initializeStorage();
 
-	// non-blocking calls
-	UsersList.removeOutdatedSessions();
-
-	const end = performance.now();
-	const durationMs = Math.round(end - start);
-
-	logger(LogLevel.Info, `loading firebase completed`, { service: 'firebase', duration: durationMs });
-
-	API_VAR.IS_SERVER_READY = true;
+    appService.isReady = true;
+    logger.info('System initialized and ready to serve traffic');
+  } catch (err) {
+    logger.error('Critical failure during initialization:', err);
+  }
 });

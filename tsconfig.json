@@ -1,17 +1,22 @@
 {
 	"compilerOptions": {
 		"target": "esnext",
-		"module": "NodeNext",
-		"moduleResolution": "nodenext",
-		"esModuleInterop": true,
-		"resolveJsonModule": true,
-		"sourceMap": false,
+		"module": "nodenext",
+		"lib": ["ESNext"],
 		"outDir": "./dist",
+		"rootDir": "./src",
 		"strict": true,
+		"esModuleInterop": true,
 		"skipLibCheck": true,
-		"allowJs": true,
-		"checkJs": false
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"moduleResolution": "nodenext",
+		"noUnusedLocals": true,
+		"sourceMap": true,
+		"noUnusedParameters": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.js"],
-	"exclude": ["node_modules", "dist"]
+	"include": ["src/**/*", "tests/utils/sync.test.ts"],
+	"exclude": ["node_modules", "dist", "tests"]
 }

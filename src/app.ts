@@ -1,120 +1,93 @@
-import cors, { CorsOptions } from 'cors';
-import express, { Request } from 'express';
-import { handle } from 'i18next-http-middleware';
-import favicon from 'serve-favicon';
+import express, { Express } from 'express';
 import helmet from 'helmet';
-import path from 'node:path';
-import rateLimit from 'express-rate-limit';
-import requestIp from 'request-ip';
+import cors from 'cors';
 import compression from 'compression';
-import i18next from 'i18next';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import v4Router from './routes/index.js';
+import { errorHandler, notFoundHandler, validateRequest, readinessGuard } from './middleware/index.js';
+import { i18nMiddleware, appService } from './services/index.js';
+import { config } from './config/index.js';
+import { HeaderSchema } from './validators/index.js';
+import { logger } from './utils/index.js';
 
-import './v3/config/firebase_config.js';
+/**
+ * Create and configure Express application
+ */
+export const createApp = (): Express => {
+	const app = express();
 
-import { internetChecker } from './v3/middleware/internet_checker.js';
-import { requestChecker } from './v3/middleware/request_checker.js';
-import { updateTracker } from './v3/middleware/update_tracker.js';
-import { serverReadyChecker } from './v3/middleware/server_ready_checker.js';
+	// Trust the first proxy (reverse proxy/load balancer)
+	// This ensures req.ip and rate limiting work correctly
+	app.set('trust proxy', 1);
 
-import routesV3 from './v3/routes/index.js';
+	// Enable response compression (gzip/deflate)
+	app.use(compression());
 
-import { errorHandler, getRoot, invalidEndpointHandler } from './v3/controllers/app_controller.js';
-import resources from './v3/config/i18n_config.js';
+	// Enable cookie parsing with cryptographic signing
+	app.use(cookieParser(config.secEncryptKey));
 
-// allowed apps url
-const whitelist = [
-	'https://organized-app.com',
-	'https://staging.organized-app.com',
-	'https://cpe-web.sws2apps.com',
-	'https://console.sws2apps.com',
-	'https://dev-console.sws2apps.com',
-	'https://dev-console.sws2apps.com',
-	'https://cpe-sws.firebaseapp.com',
-];
+	// Security middleware
+	app.use(helmet());
 
-const allowedUri = ['/app-version', '/api/public/source-material'];
+	app.use(
+		cors({
+			origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+			credentials: true,
+		}),
+	);
 
-const corsOptionsDelegate = function (req: Request, callback: (_: null, options: CorsOptions) => void) {
-	const corsOptions: CorsOptions = { origin: true, credentials: true };
+	// Body parsing middleware (Limited to 5MB)
+	app.use(express.json({ limit: '5mb' }));
+	app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
-	if (process.env.NODE_ENV === 'production') {
-		const reqOrigin = req.header('Origin');
-		if (reqOrigin) {
-			if (whitelist.indexOf(reqOrigin) === -1) {
-				const originalUri = req.headers['x-original-uri'] as string;
+	// i18n middleware (Language detection & 't' function attachment)
+	app.use(i18nMiddleware);
 
-				if (originalUri !== '/') {
-					const allowed = allowedUri.find((uri) => uri.startsWith(originalUri)) ? true : false;
-					corsOptions.origin = allowed;
-				}
-			}
-		} else {
-			corsOptions.origin = false;
-		}
-	}
+	// Serve static files
+	app.use(express.static('public'));
 
-	callback(null, corsOptions); // callback expects two parameters: error and options
+	// Rate limiting
+	const limiter = rateLimit({
+		windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
+		max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+		message: 'Too many requests from this IP, please try again later.',
+	});
+
+	app.use(limiter);
+
+	// Health check endpoints (Unprotected)
+	app.get('/health', (_req, res) => {
+		const status = appService.isReady ? 'READY' : 'STARTING';
+		res.json({
+			status,
+			uptime: process.uptime(),
+			timestamp: new Date().toISOString(),
+		});
+	});
+
+	app.get('/', (_req, res) => {
+		res.json({
+			success: true,
+			message: 'sws2apps-api is running',
+			timestamp: new Date().toISOString(),
+		});
+	});
+
+	// Readiness Guard (Protects all routes below)
+	app.use(readinessGuard);
+
+	// Global Header Validation (Ensures correct metadata for all requests)
+	app.use(validateRequest({ headers: HeaderSchema }));
+
+	// Mount API versions
+	app.use('/api', v4Router);
+
+	// Error handlers (must be last)
+	app.use(notFoundHandler);
+	app.use(errorHandler);
+
+	logger.info('Express app configured successfully');
+
+	return app;
 };
-
-const app = express();
-
-app.set('trust proxy', 1);
-
-app.use(helmet());
-
-app.use(express.static('public'));
-
-const __dirname = path.resolve();
-
-app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
-
-app.use(cors(corsOptionsDelegate));
-
-app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
-
-app.use((req, res, next) => {
-	res.header('Access-Control-Allow-Origin', req.headers.origin);
-	res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,PATCH,DELETE,OPTIONS');
-	res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-	res.header('Access-Control-Allow-Credentials', 'true');
-	res.header('Access-Control-Max-Age', '86400');
-
-	if (req.method === 'OPTIONS') {
-		res.sendStatus(204);
-		return;
-	}
-
-	next();
-});
-
-app.use(requestIp.mw()); // get IP address middleware
-app.use(internetChecker());
-app.use(requestChecker());
-app.use(updateTracker());
-app.use(serverReadyChecker());
-
-app.use(rateLimit({ windowMs: 1000, max: 20, message: JSON.stringify({ message: 'TOO_MANY_REQUESTS' }) }));
-
-i18next.init({
-	preload: ['eng'],
-	lng: 'eng',
-	fallbackLng: 'eng',
-	resources: resources,
-});
-
-app.use(handle(i18next));
-
-app.get('/', getRoot);
-
-// load routes
-app.use('/api/v3', routesV3);
-
-// Handling invalid routes
-app.use(invalidEndpointHandler);
-
-// Handling error for all requests
-app.use(errorHandler);
-
-export default app;
