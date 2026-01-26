@@ -1,8 +1,12 @@
 import {
   UserChange,
+  UserFieldServiceReport,
+  UserFieldServiceReportsUpdate,
   UserProfile,
   UserProfileClientMutable,
+  UserProfileClientUpdate,
   UserProfileServer,
+  UserProfileServerUpdate,
   UserScope,
   UserSession,
   UserSettings,
@@ -218,15 +222,11 @@ export class User {
     }
   }
 
-  public async applyProfilePatch(
-    patch: Partial<UserProfileClientMutable>
-  ): Promise<void> {
+  public async applyProfilePatch(patch: UserProfileClientUpdate) {
     await this.applyBatchedChanges([{ scope: 'profile', patch }]);
   }
 
-  public async applyServerProfilePatch(
-    patch: Partial<UserProfileServer>
-  ): Promise<void> {
+  public async applyServerProfilePatch(patch: UserProfileServerUpdate) {
     const baseProfile = this._profile || ({} as UserProfile);
 
     // Overlay administrative fields (quiet)
@@ -241,6 +241,7 @@ export class User {
 
       try {
         await this.saveProfile();
+
         logger.info(
           `Server profile patch applied for user ${this._id} (quiet)`
         );
@@ -251,8 +252,16 @@ export class User {
     }
   }
 
-  public async applySettingsPatch(patch: Partial<UserSettings>): Promise<void> {
+  public async applySettingsPatch(patch: Partial<UserSettings>) {
     await this.applyBatchedChanges([{ scope: 'settings', patch: patch }]);
+  }
+
+  public async applyFieldServiceReportPatch(
+    patch: UserFieldServiceReportsUpdate
+  ) {
+    return this.applyBatchedChanges([
+      { scope: 'field_service_reports', patch },
+    ]);
   }
 
   public async saveProfile() {
@@ -269,6 +278,10 @@ export class User {
 
   public async saveFlags() {
     await this._saveComponent('flags.json', this._flags);
+  }
+
+  public async saveFieldServiceReports(reports: UserFieldServiceReport[]) {
+    await this._saveComponent('field_service_reports.json', reports);
   }
 
   public async updateFlags(flags: string[]) {
@@ -301,6 +314,20 @@ export class User {
       logger.error(`Error fetching mutations for user ${this._id}:`, error);
     }
     return [];
+  }
+
+  public async getFieldServiceReports(): Promise<UserFieldServiceReport[]> {
+    try {
+      const key = `users/${this._id}/field_service_reports.json`;
+      const content = await s3Service.getFile(key);
+      return content ? JSON.parse(content) : [];
+    } catch (error) {
+      logger.error(
+        `Error fetching field service reports for user ${this._id}:`,
+        error
+      );
+      return [];
+    }
   }
 
   public cleanupMutations(
@@ -349,6 +376,7 @@ export class User {
 
       let finalProfile: UserProfile | undefined;
       let finalSettings: UserSettings | undefined;
+      let finalFieldServiceReports: UserFieldServiceReport[] | undefined;
 
       let hasGlobalChanges = false;
 
@@ -389,6 +417,48 @@ export class User {
             hasGlobalChanges = true;
           }
         }
+
+        // --- FIELD SERVICE REPORTS SCOPE ---
+        if (change.scope === 'field_service_reports') {
+          if (!finalFieldServiceReports)
+            finalFieldServiceReports = await this.getFieldServiceReports();
+
+          const patch = change.patch;
+          const reportId = patch.report_date;
+
+          if (!reportId) continue;
+
+          const reportIndex = finalFieldServiceReports.findIndex(
+            (r) => r.report_date === reportId
+          );
+
+          let currentReport: Partial<UserFieldServiceReport>;
+
+          if (reportIndex !== -1) {
+            currentReport = finalFieldServiceReports[reportIndex];
+          } else {
+            currentReport = {
+              report_date: reportId,
+            } as Partial<UserFieldServiceReport>;
+          }
+
+          const { merged, hasChanges } = applyDeepSyncPatch(
+            currentReport,
+            patch
+          );
+
+          if (hasChanges) {
+            if (reportIndex !== -1) {
+              finalFieldServiceReports[reportIndex] =
+                merged as UserFieldServiceReport;
+            } else {
+              finalFieldServiceReports.push(merged as UserFieldServiceReport);
+            }
+
+            recordedMutations.push({ scope: 'field_service_reports', patch });
+            hasGlobalChanges = true;
+          }
+        }
       }
 
       if (hasGlobalChanges) {
@@ -400,6 +470,13 @@ export class User {
         if (finalSettings) {
           scopesToSave.push({ scope: 'settings', data: finalSettings });
           this._settings = finalSettings; // Update internal state
+        }
+
+        if (finalFieldServiceReports) {
+          scopesToSave.push({
+            scope: 'field_service_reports',
+            data: finalFieldServiceReports,
+          });
         }
 
         // Pass structured payload to orchestrator

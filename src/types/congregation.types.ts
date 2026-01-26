@@ -240,6 +240,9 @@ interface CongregationSettingsClientMutable {
   }[];
 }
 
+export type CongregationSettingsUpdate =
+  DeepPartial<CongregationSettingsClientMutable>;
+
 export interface CongregationSettings
   extends CongregationSettingsServer, CongregationSettingsClientMutable {}
 
@@ -249,11 +252,11 @@ export type CongregationChange = {
   changes: (
     | {
         scope: 'persons';
-        patch: DeepPartial<CongregationPerson>;
+        patch: CongregationPersonUpdate;
       }
     | {
         scope: 'settings';
-        patch: DeepPartial<CongregationSettingsClientMutable>;
+        patch: CongregationSettingsUpdate;
       }
   )[];
 };

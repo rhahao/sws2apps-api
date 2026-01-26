@@ -15,6 +15,21 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
       expect(merged.updatedAt).toBe(patch.updatedAt);
     });
 
+    it('should merge new properties when the taget does not have updatedAt', () => {
+      const target: GenericObject = { name: 'Original', extra: 'extra prop' };
+      const patch: GenericObject = {
+        name: 'Updated',
+        updatedAt: '2026-01-25T18:00:00Z',
+      };
+
+      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
+
+      expect(hasChanges).toBe(true);
+      expect(merged.extra).toBe(target.extra);
+      expect(merged.name).toBe(patch.name);
+      expect((merged as GenericObject).updatedAt).toBe(patch.updatedAt);
+    });
+
     it('should reject updates when the patch has an older updatedAt', () => {
       const target = { status: 'active', updatedAt: '2026-01-25T12:00:00Z' };
       const patch = { status: 'inactive', updatedAt: '2026-01-20T12:00:00Z' };

@@ -1,13 +1,14 @@
 import { z } from 'zod';
 
-/**
- * Validator for Feature Flags endpoint headers
- */
 export const FeatureFlagsHeaderSchema = z
   .object({
-    installation: z.string({
-      message: 'Installation ID is required',
-    }),
+    installation: z
+      .string({
+        message: 'Installation ID is required',
+      })
+      .nonempty({
+        message: 'Installation ID must be a non-empty string',
+      }),
     user: z.string().optional(),
   })
   .loose();

@@ -1,5 +1,5 @@
 import { Logtail } from '@logtail/node';
-import { config } from '../config/index.js';
+import { ENV } from '../config/index.js';
 
 enum LogLevel {
   ERROR = 'error',
@@ -12,11 +12,11 @@ class Logger {
   private logtail?: Logtail;
 
   constructor() {
-    const token = config.logtailSourceToken;
+    const token = ENV.logtailSourceToken;
 
     if (token) {
       this.logtail = new Logtail(token, {
-        endpoint: config.logtailEndpoint,
+        endpoint: ENV.logtailEndpoint,
       });
     }
   }
@@ -62,7 +62,7 @@ class Logger {
   }
 
   debug(message: string, meta?: unknown): void {
-    if (config.nodeEnv === 'development') {
+    if (ENV.nodeEnv === 'development') {
       // Use this.config
       this.log(LogLevel.DEBUG, message, meta);
     }

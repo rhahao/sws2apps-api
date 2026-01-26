@@ -59,12 +59,23 @@ export const applyDeepSyncPatch = <T extends GenericObject>(
               const existingItem = resultItems[existingIndex] as GenericObject;
 
               // GATEKEEPER: If both items have updatedAt, it's the final authority
-              if ('updatedAt' in itemObj && 'updatedAt' in existingItem) {
-                const incomingDate = itemObj.updatedAt as string;
-                const existingDate = existingItem.updatedAt as string;
+              if ('updatedAt' in itemObj) {
+                let isNew = false;
 
-                if (isNewer(incomingDate, existingDate)) {
-                  resultItems[existingIndex] = itemObj;
+                if ('updatedAt' in existingItem) {
+                  const incomingDate = itemObj.updatedAt as string;
+                  const existingDate = existingItem.updatedAt as string;
+
+                  isNew = isNewer(incomingDate, existingDate);
+                } else {
+                  isNew = true;
+                }
+
+                if (isNew) {
+                  resultItems[existingIndex] = {
+                    ...(existingItem ?? {}),
+                    ...itemObj,
+                  };
                   hasChanges = true;
                 }
               } else {
@@ -104,15 +115,21 @@ export const applyDeepSyncPatch = <T extends GenericObject>(
       ) as GenericObject;
 
       // GATEKEEPER: If both have updatedAt, this is the final authority.
-      if ('updatedAt' in incomingObj && 'updatedAt' in currentObj) {
-        if (
-          isNewer(
-            incomingObj.updatedAt as string,
-            currentObj.updatedAt as string
-          )
-        ) {
+      if ('updatedAt' in incomingObj) {
+        let isNew = false;
+
+        if ('updatedAt' in currentObj) {
+          const incomingDate = incomingObj.updatedAt as string;
+          const existingDate = currentObj.updatedAt as string;
+
+          isNew = isNewer(incomingDate, existingDate);
+        } else {
+          isNew = true;
+        }
+
+        if (isNew) {
           hasChanges = true;
-          return incomingObj;
+          return { ...(currentObj ?? {}), ...incomingObj };
         }
         return currentObj;
       }

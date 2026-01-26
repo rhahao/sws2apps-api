@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { logger } from './utils/index.js';
 import { initializeStorage, initI18n, appService } from './services/index.js';
 import { initializeFirebaseAdmin } from './config/index.js'; // New import
-import { createApp } from './app.js';
+import app from './app.js';
 
 // Load environment variables
 dotenv.config();
@@ -10,7 +10,6 @@ dotenv.config();
 // Initialize logger with config - NO LONGER NEEDED as logger initializes directly
 
 const PORT = process.env.PORT || 8000;
-const app = createApp();
 
 // Start server immediately (Non-blocking)
 app.listen(PORT, async () => {

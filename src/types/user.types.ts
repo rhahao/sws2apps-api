@@ -1,8 +1,17 @@
+import { DeepPartial } from './common.types.js';
 import { AppRoleType } from './app.types.js';
 
 export type UserGlobalRoleType = 'vip' | 'pocket' | 'admin';
 
-export type UserScope = 'profile' | 'settings';
+export type UserScope = 'profile' | 'settings' | 'field_service_reports';
+
+export interface UserCongregation {
+  id: string;
+  cong_role: AppRoleType[];
+  account_type: string;
+  user_members_delegate?: string[];
+  pocket_invitation_code?: string;
+}
 
 export interface UserProfileServer {
   ETag?: string;
@@ -12,19 +21,17 @@ export interface UserProfileServer {
   mfa_enabled?: boolean;
   secret?: string;
   email_otp?: { code: string; expiredAt: number };
-  congregation?: {
-    id: string;
-    cong_role: AppRoleType[];
-    account_type: string;
-    user_members_delegate?: string[];
-    pocket_invitation_code?: string;
-  };
+  congregation?: UserCongregation;
 }
+
+export type UserProfileServerUpdate = DeepPartial<UserProfileServer>;
 
 export interface UserProfileClientMutable {
   firstname: { value: string; updatedAt: string };
   lastname: { value: string; updatedAt: string };
 }
+
+export type UserProfileClientUpdate = DeepPartial<UserProfileClientMutable>;
 
 export interface UserProfile
   extends UserProfileClientMutable, UserProfileServer {}
@@ -35,6 +42,24 @@ export interface UserSettings {
   hour_credits_enabled: { value: string; updatedAt: string };
   data_view: { value: string; updatedAt: string };
 }
+
+export type UserSettingsUpdate = DeepPartial<UserSettings>;
+
+export interface UserFieldServiceReport {
+  report_date: string;
+  _deleted: boolean;
+  updatedAt: string;
+  shared_ministry: string;
+  hours: string;
+  bible_studies: string;
+  comments: string;
+  record_type: string;
+  status: string;
+  person_uid: string;
+}
+
+export type UserFieldServiceReportsUpdate =
+  DeepPartial<UserFieldServiceReport> & { report_date: string };
 
 export interface UserSession {
   mfaVerified?: boolean;
@@ -60,7 +85,11 @@ export type UserChange = {
   ETag: string;
   timestamp: string;
   changes: (
-    | { scope: 'profile'; patch: Partial<UserProfileClientMutable> }
-    | { scope: 'settings'; patch: Partial<UserSettings> }
+    | { scope: 'profile'; patch: UserProfileClientUpdate }
+    | { scope: 'settings'; patch: UserSettingsUpdate }
+    | {
+        scope: 'field_service_reports';
+        patch: UserFieldServiceReportsUpdate;
+      }
   )[];
 };

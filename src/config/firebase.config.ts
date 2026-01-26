@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { config } from './index.js';
+import { ENV } from './index.js';
 import { logger } from '../utils/index.js';
 
 export const initializeFirebaseAdmin = () => {
@@ -9,9 +9,9 @@ export const initializeFirebaseAdmin = () => {
 
       admin.initializeApp({
         credential: admin.credential.cert({
-          projectId: config.firebase.projectId,
-          privateKey: config.firebase.privateKey,
-          clientEmail: config.firebase.clientEmail,
+          projectId: ENV.firebase.projectId,
+          privateKey: ENV.firebase.privateKey,
+          clientEmail: ENV.firebase.clientEmail,
         }),
       });
 

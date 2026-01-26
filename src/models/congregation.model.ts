@@ -368,12 +368,7 @@ export class Congregation {
     }
   }
 
-  public async applyPersonPatch(
-    personUid: string,
-    patch: CongregationPersonUpdate
-  ) {
-    return this.applyBatchedChanges([
-      { scope: 'persons', patch: { ...patch, person_uid: personUid } },
-    ]);
+  public async applyPersonPatch(patch: CongregationPersonUpdate) {
+    return this.applyBatchedChanges([{ scope: 'persons', patch }]);
   }
 }
