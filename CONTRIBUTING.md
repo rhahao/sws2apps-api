@@ -8,9 +8,9 @@ Please make sure that you have read the [code of conduct](https://github.com/sws
 
 `sws2apps-api` follows semantic versioning. We release patch versions for bugfixes, minor versions for new features or non-essential changes, and major versions for any breaking changes. Every significant change is documented in the [changelog](https://github.com/sws2apps/sws2apps-api/blob/main/CHANGELOG.md) file.
 
-## Branch Organization
+## Branching Strategy
 
-We use the `main` branch for the current version (CPE), but for the new Organized version it's important to use `main-e2e` branch. Feature flags are used for new features and major changes.
+For contributions, please create a new branch from the `main` branch. Name your branch descriptively, typically using a format like `feature/your-feature-name` or `bugfix/issue-description`. This helps keep the project history clean and understandable.
 
 ## Bugs
 
@@ -30,19 +30,31 @@ If you’re only fixing a bug, it’s fine to submit a pull request right away b
 
 ## Contribution Prerequisites
 
-- You have the latest version of [Node](https://nodejs.org), [Git](https://git-scm.com), [OpenJDK](https://www.oracle.com/java/technologies/downloads/) _(to be used for Firebase emulators)_ and [Firebase CLI](https://firebase.google.com/docs/cli) installed
+- You have the latest version of [Node](https://nodejs.org), [Git](https://git-scm.com), [OpenJDK](https://www.oracle.com/java/technologies/downloads/) _(to be used for Firebase emulators)_ and [Firebase CLI](https://firebase.google.com/docs/cli) installed.
+- You have **Docker** installed for running local S3-compatible storage (MinIO).
 - You have a dedicated project on Firebase for your local testing.
 - You will be working on one item at a time.
 - If you do not have it yet, fork the repository. Clone it if you will work locally.
 - If you have already forked and clone the repository, make sure that it is in sync with the upstream repository ([Syncing a fork](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/syncing-a-fork)).
 - Run `npm i` to install the needed dependencies
 
-### Setup Firebase Emulators
+### Setup Local Dependencies
 
-We use Firebase to be our backend. Therefore, during development, Firebase Emulators is used.
+We use Firebase for our backend and MinIO for S3-compatible local storage. During development, Firebase Emulators and a local MinIO instance are used.
 
 - Run `cp storage.rules.example storage.rules` to copy `storage.rules.example` to `storage.rules`.
-- Run `npm run start:emulators` to start the Firebase Emulators.
+- To start local MinIO:
+  ```bash
+  npm run minio:start
+  ```
+- To start Firebase Emulators:
+  ```bash
+  npm run firebase:start
+  ```
+- To stop MinIO:
+  ```bash
+  npm run minio:stop
+  ```
 
 ### Setup Environment Variables
 
