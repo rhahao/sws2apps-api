@@ -3,7 +3,11 @@ import { AppRoleType } from './app.types.js';
 
 export type UserGlobalRoleType = 'vip' | 'pocket' | 'admin';
 
-export type UserScope = 'profile' | 'settings' | 'field_service_reports' | 'bible_studies';
+export type UserScope =
+  | 'profile'
+  | 'settings'
+  | 'field_service_reports'
+  | 'bible_studies';
 
 export interface UserCongregation {
   id: string;
@@ -62,12 +66,10 @@ export type UserFieldServiceReportsUpdate =
   DeepPartial<UserFieldServiceReport> & { report_date: string };
 
 export interface UserBibleStudy {
+  _deleted: boolean;
+  person_name: string;
   person_uid: string;
-  person_data: {
-    _deleted: boolean;
-    updatedAt: string;
-    person_name: string;
-  };
+  updatedAt: string;
 }
 
 export type UserBibleStudiesUpdate = DeepPartial<UserBibleStudy> & {

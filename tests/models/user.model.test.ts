@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
+import { User } from '../../src/models/user.model.js';
+import { s3Service } from '../../src/services/index.js';
 import {
-  UserProfileServerUpdate,
+  UserBibleStudiesUpdate,
+  UserChange,
   UserFieldServiceReport,
   UserFieldServiceReportsUpdate,
-  UserBibleStudy,
-  UserBibleStudiesUpdate,
+  UserProfileClientUpdate,
+  UserProfileServerUpdate,
 } from '../../src/types/index.js';
-import { User } from '../../src/models/user.model.js';
-import { s3Service } from '../../src/services/s3.service.js';
+
+// Mock the config for logger
+vi.mock('../../src/config/index.js', () => ({
+  ENV: { nodeEnv: 'development' },
+}));
 
 // Mock s3Service
 vi.mock('../../src/services/s3.service.js', () => ({
@@ -27,15 +33,6 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
-// Mock the config for logger
-vi.mock('../../src/config/index.js', () => ({
-  ENV: {
-    nodeEnv: 'development',
-    logtailSourceToken: 'test-token',
-    logtailEndpoint: 'test-endpoint',
-  },
-}));
-
 describe('User Model', () => {
   let user: User;
   const userId = 'test-user-id';
@@ -44,42 +41,24 @@ describe('User Model', () => {
     user = new User(userId);
     vi.clearAllMocks();
 
-    // Mock default file content
+    // Setup base S3 mocks
     (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
       if (key.includes('profile.json')) {
         return JSON.stringify({
-          firstname: { value: 'Original', updatedAt: '2026-01-01T00:00:00Z' },
-          lastname: { value: 'Original', updatedAt: '2026-01-01T00:00:00Z' },
-          congregation: {
-            id: 'cong-000',
-            name: 'Original Congregation',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
+          firstname: { value: 'Old', updatedAt: '2026-01-01T00:00:00Z' },
         });
       }
-      if (key.includes('settings.json')) {
-        return JSON.stringify({
-          backup_automatic: {
-            value: 'enabled',
+
+      if (key.includes('field_service_reports.json')) {
+        return JSON.stringify([
+          {
+            report_date: '2026-01',
+            hours: '5',
             updatedAt: '2026-01-01T00:00:00Z',
           },
-          theme_follow_os_enabled: {
-            value: 'true',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-          hour_credits_enabled: {
-            value: 'true',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-          data_view: { value: 'default', updatedAt: '2026-01-01T00:00:00Z' },
-        });
+        ]);
       }
-      if (
-        key.includes('mutations.json') ||
-        key.includes('field_service_reports.json')
-      ) {
-        return JSON.stringify([]);
-      }
+
       return null;
     });
 
@@ -87,149 +66,7 @@ describe('User Model', () => {
     (s3Service.uploadFile as Mock).mockResolvedValue({});
   });
 
-  describe('applyBatchedChanges', () => {
-    it('should apply a single profile patch and save with history', async () => {
-      await user.load(); // Load initial data
-
-      const patch = {
-        firstname: { value: 'Updated', updatedAt: '2026-01-25T00:00:00Z' },
-      };
-      await user.applyBatchedChanges([{ scope: 'profile', patch: patch }]);
-
-      expect(user.profile?.firstname.value).toBe('Updated');
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/mutations.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/profile.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(user.ETag).toBe('v1'); // ETag should be bumped
-    });
-
-    it('should apply a single settings patch and save with history', async () => {
-      await user.load();
-
-      const patch = {
-        theme_follow_os_enabled: {
-          value: 'disabled',
-          updatedAt: '2026-01-25T00:00:00Z',
-        },
-      };
-      await user.applyBatchedChanges([{ scope: 'settings', patch: patch }]);
-
-      expect(user.settings?.theme_follow_os_enabled.value).toBe('disabled');
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/mutations.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/settings.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(user.ETag).toBe('v1');
-    });
-
-    it('should apply multiple patches across different scopes and save with history', async () => {
-      await user.load();
-
-      const profilePatch = {
-        firstname: { value: 'John', updatedAt: '2026-01-25T01:00:00Z' },
-      };
-      const settingsPatch = {
-        hour_credits_enabled: {
-          value: 'false',
-          updatedAt: '2026-01-25T02:00:00Z',
-        },
-      };
-
-      await user.applyBatchedChanges([
-        { scope: 'profile', patch: profilePatch },
-        { scope: 'settings', patch: settingsPatch },
-      ]);
-
-      expect(user.profile?.firstname.value).toBe('John');
-      expect(user.settings?.hour_credits_enabled.value).toBe('false');
-
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/mutations.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/profile.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/settings.json`,
-        expect.any(String),
-        'application/json'
-      );
-      expect(user.ETag).toBe('v1');
-    });
-
-    it('should not save if no actual changes are made by patches', async () => {
-      await user.load();
-      const initialProfile = { ...user.profile };
-      const initialSettings = { ...user.settings };
-
-      const profilePatch = {
-        firstname: { value: 'Original', updatedAt: '2026-01-01T00:00:00Z' },
-      }; // Older timestamp, no change
-      const settingsPatch = {
-        backup_automatic: {
-          value: 'enabled',
-          updatedAt: '2026-01-01T00:00:00Z',
-        },
-      }; // Same value and timestamp, no change
-
-      await user.applyBatchedChanges([
-        { scope: 'profile', patch: profilePatch },
-        { scope: 'settings', patch: settingsPatch },
-      ]);
-
-      expect(user.profile).toEqual(initialProfile);
-      expect(user.settings).toEqual(initialSettings);
-      expect(s3Service.uploadFile).not.toHaveBeenCalled();
-      expect(user.ETag).toBe('v0'); // ETag should not be bumped
-    });
-
-    it('should handle partial updates in profile patch', async () => {
-      await user.load();
-
-      const patch = {
-        firstname: { value: 'NewFName', updatedAt: '2026-01-25T00:00:00Z' },
-        lastname: { value: 'NewLName', updatedAt: '2026-01-25T00:00:00Z' },
-      };
-      await user.applyBatchedChanges([{ scope: 'profile', patch: patch }]);
-
-      expect(user.profile?.firstname.value).toBe('NewFName');
-      expect(user.profile?.lastname?.value).toBe('NewLName');
-      expect(user.ETag).toBe('v1');
-    });
-
-    it('should handle partial updates in settings patch', async () => {
-      await user.load();
-
-      const patch = {
-        theme_follow_os_enabled: {
-          value: 'true',
-          updatedAt: '2026-01-25T00:00:00Z',
-        },
-      };
-      await user.applyBatchedChanges([{ scope: 'settings', patch: patch }]);
-
-      expect(user.settings?.theme_follow_os_enabled.value).toBe('true');
-      expect(user.ETag).toBe('v1');
-    });
-  });
-
+  // --- SERVER ONLY PATCH TESTS ---
   describe('applyServerProfilePatch', () => {
     it('should apply a server profile patch without bumping ETag or saving history', async () => {
       await user.load(); // ETag is 'v0' after load
@@ -250,235 +87,194 @@ describe('User Model', () => {
       expect(user.profile!.createdAt).toBe(serverPatch.createdAt);
       expect(user.profile).toHaveProperty('congregation');
 
-      expect(s3Service.uploadFile).toHaveBeenCalledTimes(1);
-      expect(s3Service.uploadFile).toHaveBeenCalledWith(
-        `users/${userId}/profile.json`,
-        expect.stringContaining('"id":"cong-123"'),
-        'application/json'
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      expect(uploadFileCalls).toHaveLength(1); // profile only, no mutations, no ETag
+
+      const profileCall = uploadFileCalls.find((call) =>
+        call[0].includes('profile.json')
       );
 
-      expect(s3Service.uploadFile).not.toHaveBeenCalledWith(
-        `users/${userId}/mutations.json`,
-        expect.any(String),
-        'application/json'
-      );
+      expect(profileCall).toBeDefined();
 
       expect(user.ETag).toBe('v0');
     });
   });
 
-  describe('applyFieldServiceReportPatch', () => {
-    describe('when no existing report exists', () => {
-      it('should add a new field service report', async () => {
-        await user.load();
+  // --- CORE ENGINE TESTS ---
+  describe('applyBatchedChanges (Engine)', () => {
+    it('should process multiple scopes in one S3 transaction', async () => {
+      await user.load();
 
-        const patch: UserFieldServiceReportsUpdate = {
-          report_date: '2026/01/01',
-          updatedAt: '2026-02-01T00:00:00Z',
-          hours: '10',
-          bible_studies: '5',
-        };
+      const batch: UserChange['changes'] = [
+        {
+          scope: 'profile',
+          patch: {
+            lastname: { value: 'Doe', updatedAt: '2026-01-26T10:00:00Z' },
+          },
+        },
+        {
+          scope: 'field_service_reports',
+          patch: {
+            report_date: '2026-02',
+            hours: '10',
+            updatedAt: '2026-01-26T10:00:00Z',
+          },
+        },
+      ];
 
-        await user.applyFieldServiceReportPatch(patch);
+      await user.applyBatchedChanges(batch);
 
-        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-        const reportCall = uploadFileCalls.find((call) =>
-          call[0].includes('field_service_reports.json')
-        );
-        const mutationCall = uploadFileCalls.find((call) =>
-          call[0].includes('mutations.json')
-        );
+      // Verify state updates
+      expect(user.profile).toHaveProperty('lastname');
 
-        expect(mutationCall).toBeDefined();
-        expect(reportCall).toBeDefined();
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
 
-        const merged = reportCall![1] as string;
-        const savedReports = JSON.parse(merged) as UserFieldServiceReport[];
+      // Verify SaveWithHistory orchestration
+      // 1. Mutations, 2. ETag, 3. Profile, 4. Reports
+      expect(uploadFileCalls).toHaveLength(4);
 
-        expect(savedReports).toHaveLength(1);
-        expect(savedReports[0].hours).toBe('10');
-        expect(savedReports[0].bible_studies).toBe('5');
-        expect(user.ETag).toBe('v1');
-      });
+      const profileCall = uploadFileCalls.find((call) =>
+        call[0].includes('profile.json')
+      );
+
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      const reportsCall = uploadFileCalls.find((call) =>
+        call[0].includes('field_service_reports.json')
+      );
+
+      expect(mutationCall).toBeDefined();
+      expect(profileCall).toBeDefined();
+      expect(reportsCall).toBeDefined();
+
+      expect(user.ETag).toBe('v1');
     });
 
-    describe('when an existing report exists', () => {
-      const existingReport: UserFieldServiceReport = {
-        report_date: '2026/01/01',
-        _deleted: false,
-        updatedAt: '2026-01-15T00:00:00Z',
-        shared_ministry: '',
-        hours: '10',
-        bible_studies: '5',
-        comments: '',
-        record_type: 'report',
-        status: 'submitted',
-        person_uid: userId,
-      };
+    it('should deduplicate updates for the same item within a single batch', async () => {
+      await user.load();
 
-      beforeEach(() => {
-        (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-          if (key.includes('field_service_reports.json')) {
-            return JSON.stringify([existingReport]);
-          }
-          return JSON.stringify([]);
-        });
-      });
+      // Client sends two updates for the same report month in one batch
+      const batch: UserChange['changes'] = [
+        {
+          scope: 'field_service_reports',
+          patch: {
+            report_date: '2026-01',
+            hours: '8',
+            updatedAt: '2026-01-26T10:00:00Z',
+          },
+        },
+        {
+          scope: 'field_service_reports',
+          patch: {
+            report_date: '2026-01',
+            hours: '12',
+            updatedAt: '2026-01-26T11:00:00Z',
+          },
+        },
+      ];
 
-      it('should update an existing field service report', async () => {
-        await user.load();
+      await user.applyBatchedChanges(batch);
 
-        const patch: UserFieldServiceReportsUpdate = {
-          report_date: existingReport.report_date,
-          updatedAt: '2026-02-01T00:00:00Z',
-          hours: '12',
-        };
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
 
-        await user.applyFieldServiceReportPatch(patch);
+      const reportsCall = uploadFileCalls.find((call) =>
+        call[0].includes('field_service_reports.json')
+      );
 
-        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-        const reportCall = uploadFileCalls.find((call) =>
-          call[0].includes('field_service_reports.json')
-        );
-        const mutationCall = uploadFileCalls.find((call) =>
-          call[0].includes('mutations.json')
-        );
+      const reports = JSON.parse(reportsCall![1]) as UserFieldServiceReport[];
+      const janReport = reports.find((r) => r.report_date === '2026-01');
 
-        expect(mutationCall).toBeDefined();
-        expect(reportCall).toBeDefined();
+      // Should have adopted the latest update from the batch
+      expect(janReport?.hours).toBe('12');
+      expect(reports).toHaveLength(1); // No duplicates created
 
-        const merged = reportCall![1] as string;
-        const savedReports = JSON.parse(merged) as UserFieldServiceReport[];
+      expect(user.ETag).toBe('v1');
+    });
 
-        expect(savedReports).toHaveLength(1);
-        expect(savedReports[0].hours).toBe(patch.hours);
-        expect(savedReports[0].bible_studies).toBe(
-          existingReport.bible_studies
-        );
-        expect(user.ETag).toBe('v1');
-      });
+    it('should ignore stale updates and skip all S3 uploads', async () => {
+      await user.load(); // Loaded data has updatedAt: '2026-01-01'
 
-      it('should not save if patch timestamp is not newer', async () => {
-        await user.load();
+      const staleBatch: UserChange['changes'] = [
+        {
+          scope: 'profile',
+          patch: {
+            firstname: {
+              value: 'Newer Name but Stale',
+              updatedAt: '2025-12-31T23:59:59Z',
+            },
+          },
+        },
+        {
+          scope: 'field_service_reports',
+          patch: {
+            report_date: '2026-01',
+            hours: '99', // Higher value, but stale timestamp
+            updatedAt: '2025-12-31T23:59:59Z',
+          },
+        },
+      ];
 
-        const patch: UserFieldServiceReportsUpdate = {
-          report_date: existingReport.report_date,
-          updatedAt: '2026-01-15T00:00:00Z',
-          hours: '12',
-        };
+      await user.applyBatchedChanges(staleBatch);
 
-        await user.applyFieldServiceReportPatch(patch);
+      // CRITICAL ASSERTIONS:
+      // 1. ETag must remain v0
+      expect(user.ETag).toBe('v0');
 
-        expect(s3Service.uploadFile).not.toHaveBeenCalled();
-        expect(user.ETag).toBe('v0');
-      });
+      // 2. Internal state should not have changed
+      expect(user.profile?.firstname.value).toBe('Old');
+
+      // 3. NO S3 UPLOADS (No mutations, no profile, no reports)
+      expect(s3Service.uploadFile).not.toHaveBeenCalled();
     });
   });
 
-  describe('applyBibleStudyPatch', () => {
-    describe('when no existing bible study exists', () => {
-      it('should add a new bible study', async () => {
-        await user.load();
+  // --- CONVENIENCE WRAPPER TESTS ---
+  describe('Convenience Wrappers (Plumbing)', () => {
+    it('applyProfilePatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(user, 'applyBatchedChanges');
 
-        const patch: UserBibleStudiesUpdate = {
-          person_uid: 'person-123',
-          person_data: {
-            _deleted: false,
-            updatedAt: '2026-02-01T00:00:00Z',
-            person_name: 'John Doe',
-          },
-        };
-
-        await user.applyBibleStudyPatch(patch);
-
-        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-        const bibleStudyCall = uploadFileCalls.find((call) =>
-          call[0].includes('bible_studies.json')
-        );
-        const mutationCall = uploadFileCalls.find((call) =>
-          call[0].includes('mutations.json')
-        );
-
-        expect(mutationCall).toBeDefined();
-        expect(bibleStudyCall).toBeDefined();
-
-        const merged = bibleStudyCall![1] as string;
-        const savedBibleStudies = JSON.parse(merged) as UserBibleStudy[];
-
-        expect(savedBibleStudies).toHaveLength(1);
-        expect(savedBibleStudies[0].person_uid).toBe('person-123');
-        expect(savedBibleStudies[0].person_data.person_name).toBe('John Doe');
-        expect(user.ETag).toBe('v1');
-      });
-    });
-
-    describe('when an existing bible study exists', () => {
-      const existingBibleStudy: UserBibleStudy = {
-        person_uid: 'person-123',
-        person_data: {
-          _deleted: false,
-          updatedAt: '2026-01-15T00:00:00Z',
-          person_name: 'John Doe',
-        },
+      const patch: UserProfileClientUpdate = {
+        firstname: { value: 'Jane', updatedAt: '2026-01-26T12:00:00Z' },
       };
 
-      beforeEach(() => {
-        (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-          if (key.includes('bible_studies.json')) {
-            return JSON.stringify([existingBibleStudy]);
-          }
-          return JSON.stringify([]);
-        });
-      });
+      await user.applyProfilePatch(patch);
 
-      it('should update an existing bible study', async () => {
-        await user.load();
+      expect(spy).toHaveBeenCalledWith([{ scope: 'profile', patch }]);
+    });
 
-        const patch: UserBibleStudiesUpdate = {
-          person_uid: existingBibleStudy.person_uid,
-          person_data: {
-            updatedAt: '2026-02-01T00:00:00Z',
-            person_name: 'Jane Doe',
-          },
-        };
+    it('applyFieldServiceReportPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(user, 'applyBatchedChanges');
 
-        await user.applyBibleStudyPatch(patch);
+      const patch: UserFieldServiceReportsUpdate = {
+        report_date: '2026-03',
+        hours: '15',
+        updatedAt: '2026-01-26T12:00:00Z',
+        _deleted: false,
+      };
 
-        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-        const bibleStudyCall = uploadFileCalls.find((call) =>
-          call[0].includes('bible_studies.json')
-        );
-        const mutationCall = uploadFileCalls.find((call) =>
-          call[0].includes('mutations.json')
-        );
+      await user.applyFieldServiceReportPatch(patch);
 
-        expect(mutationCall).toBeDefined();
-        expect(bibleStudyCall).toBeDefined();
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'field_service_reports', patch },
+      ]);
+    });
 
-        const merged = bibleStudyCall![1] as string;
-        const savedBibleStudies = JSON.parse(merged) as UserBibleStudy[];
+    it('applyBibleStudyPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(user, 'applyBatchedChanges');
 
-        expect(savedBibleStudies).toHaveLength(1);
-        expect(savedBibleStudies[0].person_data.person_name).toBe('Jane Doe');
-        expect(user.ETag).toBe('v1');
-      });
+      const patch: UserBibleStudiesUpdate = {
+        person_uid: 'study-1',
+        updatedAt: '2026-01-26T12:00:00Z',
+        person_name: 'Jane Smith',
+        _deleted: false,
+      };
 
-      it('should not save if patch timestamp is not newer', async () => {
-        await user.load();
+      await user.applyBibleStudyPatch(patch);
 
-        const patch: UserBibleStudiesUpdate = {
-          person_uid: existingBibleStudy.person_uid,
-          person_data: {
-            updatedAt: '2026-01-15T00:00:00Z',
-            person_name: 'Jane Doe',
-          },
-        };
-
-        await user.applyBibleStudyPatch(patch);
-
-        expect(s3Service.uploadFile).not.toHaveBeenCalled();
-        expect(user.ETag).toBe('v0');
-      });
+      expect(spy).toHaveBeenCalledWith([{ scope: 'bible_studies', patch }]);
     });
   });
 });

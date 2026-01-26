@@ -1,4 +1,4 @@
-import { config } from '../config/index.js';
+import { ENV } from '../config/index.js';
 import { logger } from '../utils/index.js';
 import { appService } from './app.service.js';
 import { congregationRegistry } from './congregation_registry.service.js';
@@ -8,7 +8,7 @@ import { seederService } from './seeder.service.js';
 import { userRegistry } from './user_registry.service.js';
 
 export const initializeStorage = async () => {
-  const bucketName = config.S3.bucketName;
+  const bucketName = ENV.S3.bucketName;
   const settingsKey = 'api/settings.json';
   const flagsKey = 'api/flags.json';
   const installationsKey = 'api/installations.json';

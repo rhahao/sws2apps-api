@@ -4,6 +4,8 @@ import {
   CongregationPersonUpdate,
   CongregationScope,
   CongregationSettings,
+  CongregationSettingsServer,
+  CongregationSettingsServerUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -12,6 +14,7 @@ export class Congregation {
   private _id: string;
   private _flags: string[] = [];
   private _ETag: string = 'v0';
+  private _settings = {} as CongregationSettings;
 
   constructor(id: string) {
     this._id = id;
@@ -29,7 +32,33 @@ export class Congregation {
     return this._ETag;
   }
 
+  get settings() {
+    return this._settings;
+  }
+
   // --- Private Method ---
+
+  private applyCongregationServerChange(
+    current: CongregationSettings,
+    patch: CongregationSettingsServerUpdate
+  ) {
+    const merged: CongregationSettings = { ...current };
+
+    let hasChanges = false;
+
+    // Entries gives you the key and value together
+    for (const [key, newVal] of Object.entries(patch)) {
+      const k = key as keyof CongregationSettingsServer;
+
+      if (newVal !== undefined && merged[k] !== newVal) {
+        // We still need a narrow cast for assignment, but we avoid 'any'
+        Object.assign(merged, { [k]: newVal });
+        hasChanges = true;
+      }
+    }
+
+    return { merged, hasChanges };
+  }
 
   private async _saveComponent(fileName: string, data: unknown) {
     if (!data) return;
@@ -152,10 +181,15 @@ export class Congregation {
         }
       };
 
-      const [flagsData, etag] = await Promise.all([
+      const [settingsData, flagsData, etag] = await Promise.all([
+        fetchFile('settings.json'),
         fetchFile('flags.json'),
         this.getStoredEtag(),
       ]);
+
+      if (settingsData) {
+        this._settings = settingsData;
+      }
 
       if (flagsData) {
         this._flags = flagsData;
@@ -193,19 +227,6 @@ export class Congregation {
     } catch (error: unknown) {
       logger.error(`Error loading congregation ${this._id} persons:`, error);
       return [];
-    }
-  }
-
-  public async getSettings(): Promise<CongregationSettings | null> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/settings.json`
-      );
-
-      return content ? JSON.parse(content) : null;
-    } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id} settings:`, error);
-      return null;
     }
   }
 
@@ -279,7 +300,7 @@ export class Congregation {
       const scopesToSave: { scope: CongregationScope; data: object }[] = [];
 
       let finalPersons: CongregationPerson[] | undefined;
-      let finalSettings: CongregationSettings | undefined;
+      let finalSettings = this._settings || {};
 
       let hasGlobalChanges = false;
 
@@ -324,11 +345,6 @@ export class Congregation {
 
         // --- SETTINGS SCOPE ---
         if (change.scope === 'settings') {
-          if (!finalSettings) {
-            finalSettings =
-              (await this.getSettings()) || ({} as CongregationSettings);
-          }
-
           const { merged, hasChanges } = applyDeepSyncPatch(
             finalSettings,
             change.patch
@@ -370,5 +386,32 @@ export class Congregation {
 
   public async applyPersonPatch(patch: CongregationPersonUpdate) {
     return this.applyBatchedChanges([{ scope: 'persons', patch }]);
+  }
+
+  public async applyServerSettingsPatch(
+    patch: CongregationSettingsServerUpdate
+  ) {
+    const baseSettings = this._settings || {};
+
+    const { merged, hasChanges } = this.applyCongregationServerChange(
+      baseSettings,
+      patch
+    );
+
+    if (hasChanges) {
+      const oldSettings = this._settings;
+      this._settings = merged as CongregationSettings;
+
+      try {
+        await this._saveComponent('settings.json', this._settings);
+
+        logger.info(
+          `Server settings patch applied for congregation ${this._id} (quiet)`
+        );
+      } catch (error: unknown) {
+        this._settings = oldSettings;
+        throw error;
+      }
+    }
   }
 }

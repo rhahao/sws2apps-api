@@ -3,8 +3,8 @@ import { DeepPartial } from './common.types.js';
 export type CongregationScope = 'persons' | 'settings';
 
 export interface CongregationPerson {
-  _deleted: { value: string; updatedAt: string };
   person_uid: string;
+  _deleted: { value: string; updatedAt: string };
   person_firstname: { value: string; updatedAt: string };
   person_lastname: { value: string; updatedAt: string };
   person_display_name: { value: string; updatedAt: string };
@@ -87,7 +87,7 @@ export interface CongregationPerson {
 
 export type CongregationPersonUpdate = DeepPartial<CongregationPerson>;
 
-interface CongregationSettingsServer {
+export interface CongregationSettingsServer {
   country_code: string;
   country_guid: string;
   cong_prefix: string;
@@ -96,6 +96,9 @@ interface CongregationSettingsServer {
   cong_access_code: string;
   cong_new: boolean;
 }
+
+export type CongregationSettingsServerUpdate =
+  DeepPartial<CongregationSettingsServer>;
 
 interface CongregationSettingsClientMutable {
   cong_number: { value: string; updatedAt: string };

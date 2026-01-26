@@ -1,14 +1,14 @@
 import { getAuth } from 'firebase-admin/auth';
 import { UserGlobalRoleType } from '../types/index.js';
 import { User } from '../models/index.js';
-import { config } from '../config/index.js';
+import { ENV } from '../config/index.js';
 import { logger } from '../utils/index.js';
 import { userRegistry } from './user_registry.service.js';
 
 export class SeederService {
   async runDevelopmentSeeder() {
     // Only run in development/test
-    if (config.nodeEnv === 'production') {
+    if (ENV.nodeEnv === 'production') {
       return;
     }
 

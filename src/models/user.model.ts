@@ -70,19 +70,18 @@ export class User {
   private applyUserServerChange(
     current: UserProfile,
     patch: UserProfileServerUpdate
-  ): { merged: UserProfile; hasChanges: boolean } {
+  ) {
     const merged: UserProfile = { ...current };
+
     let hasChanges = false;
 
-    const patchKeys = Object.keys(patch) as Array<keyof UserProfileServer>;
+    // Entries gives you the key and value together
+    for (const [key, newVal] of Object.entries(patch)) {
+      const k = key as keyof UserProfileServer;
 
-    for (const key of patchKeys) {
-      const newVal = patch[key];
-
-      if (newVal !== undefined && newVal !== merged[key]) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (merged as any)[key] = newVal;
-
+      if (newVal !== undefined && merged[k] !== newVal) {
+        // We still need a narrow cast for assignment, but we avoid 'any'
+        Object.assign(merged, { [k]: newVal });
         hasChanges = true;
       }
     }
