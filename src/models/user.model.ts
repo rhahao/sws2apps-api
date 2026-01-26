@@ -2,14 +2,16 @@ import {
   UserChange,
   UserFieldServiceReport,
   UserFieldServiceReportsUpdate,
+  UserBibleStudy,
+  UserBibleStudiesUpdate,
   UserProfile,
-  UserProfileClientMutable,
   UserProfileClientUpdate,
   UserProfileServer,
   UserProfileServerUpdate,
   UserScope,
   UserSession,
   UserSettings,
+  UserSettingsUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/s3.service.js';
 import { logger } from '../utils/index.js';
@@ -67,7 +69,7 @@ export class User {
 
   private applyUserServerChange(
     current: UserProfile,
-    patch: Partial<UserProfileServer>
+    patch: UserProfileServerUpdate
   ): { merged: UserProfile; hasChanges: boolean } {
     const merged: UserProfile = { ...current };
     let hasChanges = false;
@@ -252,7 +254,7 @@ export class User {
     }
   }
 
-  public async applySettingsPatch(patch: Partial<UserSettings>) {
+  public async applySettingsPatch(patch: UserSettingsUpdate) {
     await this.applyBatchedChanges([{ scope: 'settings', patch: patch }]);
   }
 
@@ -262,6 +264,10 @@ export class User {
     return this.applyBatchedChanges([
       { scope: 'field_service_reports', patch },
     ]);
+  }
+
+  public async applyBibleStudyPatch(patch: UserBibleStudiesUpdate) {
+    return this.applyBatchedChanges([{ scope: 'bible_studies', patch }]);
   }
 
   public async saveProfile() {
@@ -282,6 +288,10 @@ export class User {
 
   public async saveFieldServiceReports(reports: UserFieldServiceReport[]) {
     await this._saveComponent('field_service_reports.json', reports);
+  }
+
+  public async saveBibleStudies(bibleStudies: UserBibleStudy[]) {
+    await this._saveComponent('bible_studies.json', bibleStudies);
   }
 
   public async updateFlags(flags: string[]) {
@@ -326,6 +336,17 @@ export class User {
         `Error fetching field service reports for user ${this._id}:`,
         error
       );
+      return [];
+    }
+  }
+
+  public async getBibleStudies(): Promise<UserBibleStudy[]> {
+    try {
+      const key = `users/${this._id}/bible_studies.json`;
+      const content = await s3Service.getFile(key);
+      return content ? JSON.parse(content) : [];
+    } catch (error) {
+      logger.error(`Error fetching bible studies for user ${this._id}:`, error);
       return [];
     }
   }
@@ -377,6 +398,7 @@ export class User {
       let finalProfile: UserProfile | undefined;
       let finalSettings: UserSettings | undefined;
       let finalFieldServiceReports: UserFieldServiceReport[] | undefined;
+      let finalBibleStudies: UserBibleStudy[] | undefined;
 
       let hasGlobalChanges = false;
 
@@ -386,7 +408,7 @@ export class User {
           if (!finalProfile)
             finalProfile = this._profile || ({} as UserProfile);
 
-          const patch = change.patch as Partial<UserProfileClientMutable>;
+          const patch = change.patch as UserProfileClientUpdate;
 
           const { merged, hasChanges } = applyDeepSyncPatch(
             finalProfile,
@@ -408,7 +430,7 @@ export class User {
 
           const { merged, hasChanges } = applyDeepSyncPatch(
             finalSettings,
-            change.patch as Partial<UserSettings>
+            change.patch as UserSettingsUpdate
           );
 
           if (hasChanges) {
@@ -432,14 +454,14 @@ export class User {
             (r) => r.report_date === reportId
           );
 
-          let currentReport: Partial<UserFieldServiceReport>;
+          let currentReport: UserFieldServiceReportsUpdate;
 
           if (reportIndex !== -1) {
             currentReport = finalFieldServiceReports[reportIndex];
           } else {
             currentReport = {
               report_date: reportId,
-            } as Partial<UserFieldServiceReport>;
+            } as UserFieldServiceReportsUpdate;
           }
 
           const { merged, hasChanges } = applyDeepSyncPatch(
@@ -456,6 +478,47 @@ export class User {
             }
 
             recordedMutations.push({ scope: 'field_service_reports', patch });
+            hasGlobalChanges = true;
+          }
+        }
+
+        // --- BIBLE STUDIES SCOPE ---
+        if (change.scope === 'bible_studies') {
+          if (!finalBibleStudies)
+            finalBibleStudies = await this.getBibleStudies();
+
+          const patch = change.patch;
+          const personUid = patch.person_uid;
+
+          if (!personUid) continue;
+
+          const studyIndex = finalBibleStudies.findIndex(
+            (bs) => bs.person_uid === personUid
+          );
+
+          let currentStudy: UserBibleStudiesUpdate;
+
+          if (studyIndex !== -1) {
+            currentStudy = finalBibleStudies[studyIndex];
+          } else {
+            currentStudy = {
+              person_uid: personUid,
+            } as UserBibleStudiesUpdate;
+          }
+
+          const { merged, hasChanges } = applyDeepSyncPatch(
+            currentStudy,
+            patch
+          );
+
+          if (hasChanges) {
+            if (studyIndex !== -1) {
+              finalBibleStudies[studyIndex] = merged as UserBibleStudy;
+            } else {
+              finalBibleStudies.push(merged as UserBibleStudy);
+            }
+
+            recordedMutations.push({ scope: 'bible_studies', patch });
             hasGlobalChanges = true;
           }
         }
@@ -476,6 +539,12 @@ export class User {
           scopesToSave.push({
             scope: 'field_service_reports',
             data: finalFieldServiceReports,
+          });
+        }
+        if (finalBibleStudies) {
+          scopesToSave.push({
+            scope: 'bible_studies',
+            data: finalBibleStudies,
           });
         }
 

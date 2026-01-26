@@ -3,6 +3,8 @@ import {
   UserProfileServerUpdate,
   UserFieldServiceReport,
   UserFieldServiceReportsUpdate,
+  UserBibleStudy,
+  UserBibleStudiesUpdate,
 } from '../../src/types/index.js';
 import { User } from '../../src/models/user.model.js';
 import { s3Service } from '../../src/services/s3.service.js';
@@ -366,6 +368,113 @@ describe('User Model', () => {
         };
 
         await user.applyFieldServiceReportPatch(patch);
+
+        expect(s3Service.uploadFile).not.toHaveBeenCalled();
+        expect(user.ETag).toBe('v0');
+      });
+    });
+  });
+
+  describe('applyBibleStudyPatch', () => {
+    describe('when no existing bible study exists', () => {
+      it('should add a new bible study', async () => {
+        await user.load();
+
+        const patch: UserBibleStudiesUpdate = {
+          person_uid: 'person-123',
+          person_data: {
+            _deleted: false,
+            updatedAt: '2026-02-01T00:00:00Z',
+            person_name: 'John Doe',
+          },
+        };
+
+        await user.applyBibleStudyPatch(patch);
+
+        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+        const bibleStudyCall = uploadFileCalls.find((call) =>
+          call[0].includes('bible_studies.json')
+        );
+        const mutationCall = uploadFileCalls.find((call) =>
+          call[0].includes('mutations.json')
+        );
+
+        expect(mutationCall).toBeDefined();
+        expect(bibleStudyCall).toBeDefined();
+
+        const merged = bibleStudyCall![1] as string;
+        const savedBibleStudies = JSON.parse(merged) as UserBibleStudy[];
+
+        expect(savedBibleStudies).toHaveLength(1);
+        expect(savedBibleStudies[0].person_uid).toBe('person-123');
+        expect(savedBibleStudies[0].person_data.person_name).toBe('John Doe');
+        expect(user.ETag).toBe('v1');
+      });
+    });
+
+    describe('when an existing bible study exists', () => {
+      const existingBibleStudy: UserBibleStudy = {
+        person_uid: 'person-123',
+        person_data: {
+          _deleted: false,
+          updatedAt: '2026-01-15T00:00:00Z',
+          person_name: 'John Doe',
+        },
+      };
+
+      beforeEach(() => {
+        (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
+          if (key.includes('bible_studies.json')) {
+            return JSON.stringify([existingBibleStudy]);
+          }
+          return JSON.stringify([]);
+        });
+      });
+
+      it('should update an existing bible study', async () => {
+        await user.load();
+
+        const patch: UserBibleStudiesUpdate = {
+          person_uid: existingBibleStudy.person_uid,
+          person_data: {
+            updatedAt: '2026-02-01T00:00:00Z',
+            person_name: 'Jane Doe',
+          },
+        };
+
+        await user.applyBibleStudyPatch(patch);
+
+        const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+        const bibleStudyCall = uploadFileCalls.find((call) =>
+          call[0].includes('bible_studies.json')
+        );
+        const mutationCall = uploadFileCalls.find((call) =>
+          call[0].includes('mutations.json')
+        );
+
+        expect(mutationCall).toBeDefined();
+        expect(bibleStudyCall).toBeDefined();
+
+        const merged = bibleStudyCall![1] as string;
+        const savedBibleStudies = JSON.parse(merged) as UserBibleStudy[];
+
+        expect(savedBibleStudies).toHaveLength(1);
+        expect(savedBibleStudies[0].person_data.person_name).toBe('Jane Doe');
+        expect(user.ETag).toBe('v1');
+      });
+
+      it('should not save if patch timestamp is not newer', async () => {
+        await user.load();
+
+        const patch: UserBibleStudiesUpdate = {
+          person_uid: existingBibleStudy.person_uid,
+          person_data: {
+            updatedAt: '2026-01-15T00:00:00Z',
+            person_name: 'Jane Doe',
+          },
+        };
+
+        await user.applyBibleStudyPatch(patch);
 
         expect(s3Service.uploadFile).not.toHaveBeenCalled();
         expect(user.ETag).toBe('v0');

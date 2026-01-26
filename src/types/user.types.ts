@@ -3,7 +3,7 @@ import { AppRoleType } from './app.types.js';
 
 export type UserGlobalRoleType = 'vip' | 'pocket' | 'admin';
 
-export type UserScope = 'profile' | 'settings' | 'field_service_reports';
+export type UserScope = 'profile' | 'settings' | 'field_service_reports' | 'bible_studies';
 
 export interface UserCongregation {
   id: string;
@@ -61,6 +61,19 @@ export interface UserFieldServiceReport {
 export type UserFieldServiceReportsUpdate =
   DeepPartial<UserFieldServiceReport> & { report_date: string };
 
+export interface UserBibleStudy {
+  person_uid: string;
+  person_data: {
+    _deleted: boolean;
+    updatedAt: string;
+    person_name: string;
+  };
+}
+
+export type UserBibleStudiesUpdate = DeepPartial<UserBibleStudy> & {
+  person_uid: string;
+};
+
 export interface UserSession {
   mfaVerified?: boolean;
   last_seen: string;
@@ -90,6 +103,10 @@ export type UserChange = {
     | {
         scope: 'field_service_reports';
         patch: UserFieldServiceReportsUpdate;
+      }
+    | {
+        scope: 'bible_studies';
+        patch: UserBibleStudiesUpdate;
       }
   )[];
 };

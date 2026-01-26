@@ -1,8 +1,8 @@
-
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { Request, Response } from 'express';
 import { getFeatureFlags } from '../../src/controllers/app.controller.js';
 import { appService } from '../../src/services/app.service.js';
+import { InstallationItem } from '../../src/types/index.js';
 
 // Mock S3 config
 vi.mock('../../src/config/s3.config.js', () => ({
@@ -19,7 +19,7 @@ vi.mock('../../src/config/s3.config.js', () => ({
 // Mock services
 vi.mock('../../src/services/app.service.js', () => ({
   appService: {
-    installations: { all: [] },
+    installations: { all: [] as InstallationItem[] },
     evaluateFeatureFlags: vi.fn(),
     updateInstallationRegistry: vi.fn(),
   },
@@ -45,8 +45,8 @@ describe('getFeatureFlags', () => {
 
     req = {
       headers: {
-        'installation': 'test-installation-id',
-        'user': 'test-user-id',
+        installation: 'test-installation-id',
+        user: 'test-user-id',
       },
     };
 
@@ -54,18 +54,26 @@ describe('getFeatureFlags', () => {
 
     vi.clearAllMocks();
 
-    (appService.installations.all as any) = [];
+    appService.installations.all = [];
   });
 
   it('should call services and return feature flags on success', async () => {
     const mockFlags = { 'new-feature': true };
     (appService.evaluateFeatureFlags as Mock).mockResolvedValue(mockFlags);
-    (appService.updateInstallationRegistry as Mock).mockResolvedValue(undefined);
+    (appService.updateInstallationRegistry as Mock).mockResolvedValue(
+      undefined
+    );
 
     await getFeatureFlags(req as Request, res as Response);
 
-    expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith('test-installation-id', 'test-user-id');
-    expect(appService.updateInstallationRegistry).toHaveBeenCalledWith('test-installation-id', 'test-user-id');
+    expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith(
+      'test-installation-id',
+      'test-user-id'
+    );
+    expect(appService.updateInstallationRegistry).toHaveBeenCalledWith(
+      'test-installation-id',
+      'test-user-id'
+    );
 
     expect(status).toHaveBeenCalledWith(200);
     expect(json).toHaveBeenCalledWith(mockFlags);
@@ -73,21 +81,33 @@ describe('getFeatureFlags', () => {
 
   it('should derive userId from known installation if not in header', async () => {
     const mockFlags = { 'another-feature': false };
-    req.headers = { 'installation': 'known-installation-id' }; // No user header
+    req.headers = { installation: 'known-installation-id' }; // No user header
 
-    (appService.installations.all as any) = [{ id: 'known-installation-id', user: 'derived-user-id', status: 'linked' }];
+    appService.installations.all = [
+      {
+        id: 'known-installation-id',
+        user: 'derived-user-id',
+        status: 'linked',
+        registered: '',
+      },
+    ];
 
     (appService.evaluateFeatureFlags as Mock).mockResolvedValue(mockFlags);
 
     await getFeatureFlags(req as Request, res as Response);
 
-    expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith('known-installation-id', 'derived-user-id');
-    expect(appService.updateInstallationRegistry).toHaveBeenCalledWith('known-installation-id', 'derived-user-id');
+    expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith(
+      'known-installation-id',
+      'derived-user-id'
+    );
+    expect(appService.updateInstallationRegistry).toHaveBeenCalledWith(
+      'known-installation-id',
+      'derived-user-id'
+    );
 
     expect(status).toHaveBeenCalledWith(200);
     expect(json).toHaveBeenCalledWith(mockFlags);
   });
-
 
   it('should handle errors gracefully', async () => {
     const error = new Error('Something went wrong');
