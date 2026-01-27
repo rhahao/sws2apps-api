@@ -38,7 +38,7 @@ vi.mock('../../src/utils/logger.js', () => ({
 
 describe('Congregation Model', () => {
   let congregation: Congregation;
-  const congId = 'test-congregation-id';
+  const congId = 'b2b17fbc-88f4-4695-ae63-be3d6f5f499a';
 
   beforeEach(() => {
     congregation = new Congregation(congId);
@@ -50,7 +50,7 @@ describe('Congregation Model', () => {
           cong_name: 'New Congregation Name',
           country_code: 'MDG',
           cong_prefix: 'ABCDEFGHIJ',
-          country_guid: '1234567890',
+          country_guid: 'F4A7180D-FCB4-491E-86DF-59FB18C1CB5A',
         });
       }
 
