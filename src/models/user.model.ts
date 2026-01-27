@@ -12,6 +12,9 @@ import {
   UserSession,
   UserSettings,
   UserSettingsUpdate,
+  UserPatchContext,
+  DelegatedFieldServiceReportUpdate,
+  DelegatedFieldServiceReport,
 } from '../types/index.js';
 import { s3Service } from '../services/s3.service.js';
 import { logger } from '../utils/index.js';
@@ -174,6 +177,130 @@ export class User {
     }
   }
 
+  private async handleProfilePatch(
+    patch: UserProfileClientUpdate,
+    context: UserPatchContext
+  ) {
+    const { merged, hasChanges } = applyDeepSyncPatch(
+      context.finalProfile,
+      patch
+    );
+    if (hasChanges) {
+      context.finalProfile = merged as UserProfile;
+    }
+    return { hasChanges, data: context.finalProfile };
+  }
+
+  private async handleSettingsPatch(
+    patch: UserSettingsUpdate,
+    context: UserPatchContext
+  ) {
+    const { merged, hasChanges } = applyDeepSyncPatch(
+      context.finalSettings,
+      patch
+    );
+    if (hasChanges) {
+      context.finalSettings = merged as UserSettings;
+    }
+    return { hasChanges, data: context.finalSettings };
+  }
+
+  private async handleFieldServiceReportsPatch(
+    patch: UserFieldServiceReportsUpdate,
+    context: UserPatchContext
+  ) {
+    if (!context.finalFieldServiceReports) {
+      context.finalFieldServiceReports = await this.getFieldServiceReports();
+    }
+
+    const reports = context.finalFieldServiceReports;
+    const reportId = patch.report_date;
+
+    if (!reportId) return { hasChanges: false, data: reports };
+
+    const reportIndex = reports.findIndex((r) => r.report_date === reportId);
+    const currentReport =
+      reportIndex !== -1
+        ? reports[reportIndex]
+        : ({ report_date: reportId } as UserFieldServiceReport);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+
+    if (hasChanges) {
+      if (reportIndex !== -1) {
+        reports[reportIndex] = merged as UserFieldServiceReport;
+      } else {
+        reports.push(merged as UserFieldServiceReport);
+      }
+    }
+
+    return { hasChanges, data: reports };
+  }
+
+  private async handleBibleStudiesPatch(
+    patch: UserBibleStudiesUpdate,
+    context: UserPatchContext
+  ) {
+    if (!context.finalBibleStudies) {
+      context.finalBibleStudies = await this.getBibleStudies();
+    }
+
+    const studies = context.finalBibleStudies;
+    const personUid = patch.person_uid;
+
+    if (!personUid) return { hasChanges: false, data: studies };
+
+    const studyIndex = studies.findIndex((bs) => bs.person_uid === personUid);
+    const currentStudy =
+      studyIndex !== -1
+        ? studies[studyIndex]
+        : ({ person_uid: personUid } as UserBibleStudy);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentStudy, patch);
+
+    if (hasChanges) {
+      if (studyIndex !== -1) {
+        studies[studyIndex] = merged as UserBibleStudy;
+      } else {
+        studies.push(merged as UserBibleStudy);
+      }
+    }
+
+    return { hasChanges, data: studies };
+  }
+
+  private async handleDelegatedFieldServiceReportsPatch(
+    patch: DelegatedFieldServiceReportUpdate,
+    context: UserPatchContext
+  ) {
+    if (!context.finalDelegatedFieldServiceReports) {
+      context.finalDelegatedFieldServiceReports = await this.getDelegatedFieldServiceReports();
+    }
+
+    const reports = context.finalDelegatedFieldServiceReports;
+    const reportId = patch.report_date;
+
+    if (!reportId) return { hasChanges: false, data: reports };
+
+    const reportIndex = reports.findIndex((r) => r.report_date === reportId);
+    const currentReport =
+      reportIndex !== -1
+        ? reports[reportIndex]
+        : ({ report_date: reportId } as DelegatedFieldServiceReport);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+
+    if (hasChanges) {
+      if (reportIndex !== -1) {
+        reports[reportIndex] = merged as DelegatedFieldServiceReport;
+      } else {
+        reports.push(merged as DelegatedFieldServiceReport);
+      }
+    }
+
+    return { hasChanges, data: reports };
+  }
+
   // --- Public Method ---
 
   public async load() {
@@ -269,6 +396,10 @@ export class User {
     return this.applyBatchedChanges([{ scope: 'bible_studies', patch }]);
   }
 
+  public async applyDelegatedFieldServiceReporPatch(patch: DelegatedFieldServiceReportUpdate) {
+    return this.applyBatchedChanges([{ scope: 'delegated_field_service_reports', patch }]);
+  }
+
   public async saveProfile() {
     await this.saveComponent('profile.json', this._profile);
   }
@@ -291,6 +422,10 @@ export class User {
 
   public async saveBibleStudies(bibleStudies: UserBibleStudy[]) {
     await this.saveComponent('bible_studies.json', bibleStudies);
+  }
+
+  public async saveDelegatedFieldServiceReports(reports: DelegatedFieldServiceReport[]) {
+    await this.saveComponent('delegated_field_service_reports.json', reports);
   }
 
   public async updateFlags(flags: string[]) {
@@ -350,6 +485,20 @@ export class User {
     }
   }
 
+  public async getDelegatedFieldServiceReports(): Promise<DelegatedFieldServiceReport[]> {
+    try {
+      const key = `users/${this._id}/delegated_field_service_reports.json`;
+      const content = await s3Service.getFile(key);
+      return content ? JSON.parse(content) : [];
+    } catch (error) {
+      logger.error(
+        `Error fetching field service reports for user ${this._id}:`,
+        error
+      );
+      return [];
+    }
+  }
+
   public cleanupMutations(
     changes: UserChange[],
     cutoffDate?: Date
@@ -390,165 +539,70 @@ export class User {
 
   public async applyBatchedChanges(changes: UserChange['changes']) {
     try {
+      type ScopeData =
+        | UserProfile
+        | UserSettings
+        | UserFieldServiceReport[]
+        | UserBibleStudy[]
+        | DelegatedFieldServiceReport[];
+
       const recordedMutations: UserChange['changes'] = [];
 
-      const scopesToSave: { scope: UserScope; data: object }[] = [];
+      const scopesToSave = new Map<UserScope, ScopeData>();
 
-      let finalProfile: UserProfile | undefined;
-      let finalSettings: UserSettings | undefined;
-      let finalFieldServiceReports: UserFieldServiceReport[] | undefined;
-      let finalBibleStudies: UserBibleStudy[] | undefined;
-
-      let hasGlobalChanges = false;
+      const context: UserPatchContext = {
+        finalProfile: this._profile || ({} as UserProfile),
+        finalSettings: this._settings || ({} as UserSettings),
+        finalFieldServiceReports: undefined,
+        finalBibleStudies: undefined,
+        finalDelegatedFieldServiceReports: undefined
+      };
 
       for (const change of changes) {
-        // --- PROFILE SCOPE ---
-        if (change.scope === 'profile') {
-          if (!finalProfile)
-            finalProfile = this._profile || ({} as UserProfile);
+        let result: { hasChanges: boolean; data: ScopeData } | undefined;
 
-          const patch = change.patch as UserProfileClientUpdate;
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            finalProfile,
-            patch
-          );
-
-          if (hasChanges) {
-            finalProfile = merged as UserProfile;
-            recordedMutations.push({ scope: 'profile', patch: patch });
-            hasGlobalChanges = true;
-          }
+        switch (change.scope) {
+          case 'profile':
+            result = await this.handleProfilePatch(
+              change.patch as UserProfileClientUpdate,
+              context
+            );
+            break;
+          case 'settings':
+            result = await this.handleSettingsPatch(
+              change.patch as UserSettingsUpdate,
+              context
+            );
+            break;
+          case 'field_service_reports':
+            result = await this.handleFieldServiceReportsPatch(
+              change.patch,
+              context
+            );
+            break;
+          case 'bible_studies':
+            result = await this.handleBibleStudiesPatch(change.patch, context);
+            break;
+          case 'delegated_field_service_reports':
+            result = await this.handleDelegatedFieldServiceReportsPatch(change.patch, context)
+            break;
         }
 
-        // --- SETTINGS SCOPE ---
-        if (change.scope === 'settings') {
-          if (!finalSettings) {
-            finalSettings = this._settings || ({} as UserSettings);
-          }
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            finalSettings,
-            change.patch as UserSettingsUpdate
-          );
-
-          if (hasChanges) {
-            finalSettings = merged as UserSettings;
-            recordedMutations.push({ scope: 'settings', patch: change.patch });
-            hasGlobalChanges = true;
-          }
-        }
-
-        // --- FIELD SERVICE REPORTS SCOPE ---
-        if (change.scope === 'field_service_reports') {
-          if (!finalFieldServiceReports)
-            finalFieldServiceReports = await this.getFieldServiceReports();
-
-          const patch = change.patch;
-          const reportId = patch.report_date;
-
-          if (!reportId) continue;
-
-          const reportIndex = finalFieldServiceReports.findIndex(
-            (r) => r.report_date === reportId
-          );
-
-          let currentReport: UserFieldServiceReportsUpdate;
-
-          if (reportIndex !== -1) {
-            currentReport = finalFieldServiceReports[reportIndex];
-          } else {
-            currentReport = {
-              report_date: reportId,
-            } as UserFieldServiceReportsUpdate;
-          }
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            currentReport,
-            patch
-          );
-
-          if (hasChanges) {
-            if (reportIndex !== -1) {
-              finalFieldServiceReports[reportIndex] =
-                merged as UserFieldServiceReport;
-            } else {
-              finalFieldServiceReports.push(merged as UserFieldServiceReport);
-            }
-
-            recordedMutations.push({ scope: 'field_service_reports', patch });
-            hasGlobalChanges = true;
-          }
-        }
-
-        // --- BIBLE STUDIES SCOPE ---
-        if (change.scope === 'bible_studies') {
-          if (!finalBibleStudies)
-            finalBibleStudies = await this.getBibleStudies();
-
-          const patch = change.patch;
-          const personUid = patch.person_uid;
-
-          if (!personUid) continue;
-
-          const studyIndex = finalBibleStudies.findIndex(
-            (bs) => bs.person_uid === personUid
-          );
-
-          let currentStudy: UserBibleStudiesUpdate;
-
-          if (studyIndex !== -1) {
-            currentStudy = finalBibleStudies[studyIndex];
-          } else {
-            currentStudy = {
-              person_uid: personUid,
-            } as UserBibleStudiesUpdate;
-          }
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            currentStudy,
-            patch
-          );
-
-          if (hasChanges) {
-            if (studyIndex !== -1) {
-              finalBibleStudies[studyIndex] = merged as UserBibleStudy;
-            } else {
-              finalBibleStudies.push(merged as UserBibleStudy);
-            }
-
-            recordedMutations.push({ scope: 'bible_studies', patch });
-            hasGlobalChanges = true;
-          }
+        if (result && result.hasChanges) {
+          recordedMutations.push(change);
+          scopesToSave.set(change.scope, result.data);
         }
       }
 
-      if (hasGlobalChanges) {
-        // Aggregate final data for all modified scopes
-        if (finalProfile) {
-          scopesToSave.push({ scope: 'profile', data: finalProfile });
-          this._profile = finalProfile; // Update internal state
-        }
-        if (finalSettings) {
-          scopesToSave.push({ scope: 'settings', data: finalSettings });
-          this._settings = finalSettings; // Update internal state
-        }
+      if (recordedMutations.length > 0) {
+        this._profile = context.finalProfile;
+        this._settings = context.finalSettings;
 
-        if (finalFieldServiceReports) {
-          scopesToSave.push({
-            scope: 'field_service_reports',
-            data: finalFieldServiceReports,
-          });
-        }
-        if (finalBibleStudies) {
-          scopesToSave.push({
-            scope: 'bible_studies',
-            data: finalBibleStudies,
-          });
-        }
+        const finalScopes = Array.from(scopesToSave.entries()).map(
+          ([scope, data]) => ({ scope, data })
+        );
 
-        // Pass structured payload to orchestrator
-        await this.saveWithHistory(recordedMutations, scopesToSave);
+        await this.saveWithHistory(recordedMutations, finalScopes);
 
         logger.info(
           `Successfully applied batch: ${recordedMutations.length} mutations for user ${this._id}`
@@ -556,7 +610,7 @@ export class User {
       } else {
         logger.info(`No changes to apply from batch for user ${this._id}`);
       }
-    } catch (error: unknown) {
+    } catch (error) {
       logger.error(`Error applying batched changes for ${this._id}:`, error);
       throw error;
     }

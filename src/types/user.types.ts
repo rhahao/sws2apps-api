@@ -7,7 +7,8 @@ export type UserScope =
   | 'profile'
   | 'settings'
   | 'field_service_reports'
-  | 'bible_studies';
+  | 'bible_studies'
+  | 'delegated_field_service_reports';
 
 export interface UserCongregation {
   id: string;
@@ -38,7 +39,8 @@ export interface UserProfileClientMutable {
 export type UserProfileClientUpdate = DeepPartial<UserProfileClientMutable>;
 
 export interface UserProfile
-  extends UserProfileClientMutable, UserProfileServer {}
+  extends UserProfileClientMutable,
+    UserProfileServer {}
 
 export interface UserSettings {
   backup_automatic: { value: string; updatedAt: string };
@@ -63,7 +65,10 @@ export interface UserFieldServiceReport {
 }
 
 export type UserFieldServiceReportsUpdate =
-  DeepPartial<UserFieldServiceReport> & { report_date: string };
+  DeepPartial<UserFieldServiceReport> & {
+    report_date: string;
+    updatedAt: string;
+  };
 
 export interface UserBibleStudy {
   _deleted: boolean;
@@ -74,6 +79,7 @@ export interface UserBibleStudy {
 
 export type UserBibleStudiesUpdate = DeepPartial<UserBibleStudy> & {
   person_uid: string;
+  updatedAt: string;
 };
 
 export interface UserSession {
@@ -96,6 +102,34 @@ export interface UserSession {
   identifier: string;
 }
 
+export interface DelegatedFieldServiceReport {
+  report_id: string;
+  _deleted: string;
+  updatedAt: string;
+  shared_ministry: string;
+  hours: string;
+  bible_studies: string;
+  comments: string;
+  status: string;
+  person_uid: string;
+  report_date: string;
+}
+
+export type DelegatedFieldServiceReportUpdate = DeepPartial<DelegatedFieldServiceReport> & {
+  report_id: string;
+  person_uid: string;
+  updatedAt: string;
+  report_date: string;
+};
+
+export interface UserPatchContext {
+  finalProfile: UserProfile;
+  finalSettings: UserSettings;
+  finalFieldServiceReports?: UserFieldServiceReport[]
+  finalBibleStudies?: UserBibleStudy[]
+  finalDelegatedFieldServiceReports?: DelegatedFieldServiceReport[]
+}
+
 export type UserChange = {
   ETag: string;
   timestamp: string;
@@ -109,6 +143,10 @@ export type UserChange = {
     | {
         scope: 'bible_studies';
         patch: UserBibleStudiesUpdate;
+      }
+      | {
+        scope: 'delegated_field_service_reports';
+        patch: DelegatedFieldServiceReportUpdate;
       }
   )[];
 };

@@ -2,12 +2,16 @@ import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
 import { User } from '../../src/models/user.model.js';
 import { s3Service } from '../../src/services/index.js';
 import {
+  DelegatedFieldServiceReport,
+  DelegatedFieldServiceReportUpdate,
   UserBibleStudiesUpdate,
+  UserBibleStudy,
   UserChange,
   UserFieldServiceReport,
   UserFieldServiceReportsUpdate,
   UserProfileClientUpdate,
   UserProfileServerUpdate,
+  UserSettingsUpdate,
 } from '../../src/types/index.js';
 
 // Mock the config for logger
@@ -49,16 +53,18 @@ describe('User Model', () => {
         });
       }
 
-      if (key.includes('field_service_reports.json')) {
-        return JSON.stringify([
-          {
-            report_date: '2026-01',
-            hours: '5',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-        ]);
+      if (key.includes('settings.json')) {
+        return JSON.stringify({});
       }
 
+      if (
+        key.includes('mutations.json') ||
+        key.includes('field_service_reports.json') ||
+        key.includes('bible_studies.json') ||
+        key.includes('delegated_field_service_reports.json')
+      ) {
+        return JSON.stringify([]);
+      }
       return null;
     });
 
@@ -212,14 +218,6 @@ describe('User Model', () => {
             },
           },
         },
-        {
-          scope: 'field_service_reports',
-          patch: {
-            report_date: '2026-01',
-            hours: '99', // Higher value, but stale timestamp
-            updatedAt: '2025-12-31T23:59:59Z',
-          },
-        },
       ];
 
       await user.applyBatchedChanges(staleBatch);
@@ -233,6 +231,176 @@ describe('User Model', () => {
 
       // 3. NO S3 UPLOADS (No mutations, no profile, no reports)
       expect(s3Service.uploadFile).not.toHaveBeenCalled();
+    });
+
+    it('should apply a single profile patch and save with history', async () => {
+      await user.load();
+
+      const patch: UserProfileClientUpdate = {
+        lastname: { value: 'Jane', updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await user.applyBatchedChanges([{ scope: 'profile', patch: patch }]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const profileCall = uploadFileCalls.find((call) =>
+        call[0].includes('profile.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(profileCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      expect(user.profile).toHaveProperty('lastname');
+      expect(user.profile!.lastname.value).toBe(patch.lastname!.value);
+      expect(user.profile!.lastname.updatedAt).toBe(patch.lastname!.updatedAt);
+
+      expect(user.ETag).toBe('v1');
+    });
+
+    it('should apply a single settings patch and save with history', async () => {
+      await user.load();
+
+      const patch: UserSettingsUpdate = {
+        data_view: { value: 'table', updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await user.applyBatchedChanges([{ scope: 'settings', patch: patch }]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const settingsCall = uploadFileCalls.find((call) =>
+        call[0].includes('settings.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(settingsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      expect(user.settings).toHaveProperty('data_view');
+      expect(user.settings!.data_view.value).toBe(patch.data_view!.value);
+      expect(user.settings!.data_view.updatedAt).toBe(
+        patch.data_view!.updatedAt
+      );
+
+      expect(user.ETag).toBe('v1');
+    });
+
+    it('should apply a single field_service_reports patch and save with history', async () => {
+      await user.load();
+
+      const patch: UserFieldServiceReportsUpdate = {
+        report_date: '2026/01/01',
+        updatedAt: '2026-01-26T12:00:00Z',
+        hours: '100',
+      };
+
+      await user.applyBatchedChanges([
+        { scope: 'field_service_reports', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const reportsCall = uploadFileCalls.find((call) =>
+        call[0].includes('field_service_reports.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(reportsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = reportsCall![1] as string;
+      const savedReports = JSON.parse(merged) as UserFieldServiceReport[];
+
+      expect(savedReports).toHaveLength(1);
+      expect(savedReports[0].report_date).toBe(patch.report_date);
+      expect(savedReports[0].updatedAt).toBe(patch.updatedAt);
+      expect(savedReports[0].hours).toBe(patch.hours);
+
+      expect(user.ETag).toBe('v1');
+    });
+
+    it('should apply a single bible_studies patch and save with history', async () => {
+      await user.load();
+
+      const patch: UserBibleStudiesUpdate = {
+        person_uid: 'study-1',
+        updatedAt: '2026-01-26T12:00:00Z',
+        person_name: 'Jane Smith',
+      };
+
+      await user.applyBatchedChanges([
+        { scope: 'bible_studies', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const studiesCall = uploadFileCalls.find((call) =>
+        call[0].includes('bible_studies.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(studiesCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = studiesCall![1] as string;
+      const savedReports = JSON.parse(merged) as UserBibleStudy[];
+
+      expect(savedReports).toHaveLength(1);
+      expect(savedReports[0].person_uid).toBe(patch.person_uid);
+      expect(savedReports[0].updatedAt).toBe(patch.updatedAt);
+      expect(savedReports[0].person_name).toBe(patch.person_name);
+
+      expect(user.ETag).toBe('v1');
+    });
+
+    it('should apply a single delegated_field_service_reports patch and save with history', async () => {
+      await user.load();
+
+      const patch: DelegatedFieldServiceReportUpdate = {
+        report_id: 'delegated-report-id',
+        person_uid: 'person-uid',
+        updatedAt: '2026-01-26T12:00:00Z',
+        report_date: '2026/01/01',
+        hours: '20',
+      };
+
+      await user.applyBatchedChanges([
+        { scope: 'delegated_field_service_reports', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const reportsCall = uploadFileCalls.find((call) =>
+        call[0].includes('delegated_field_service_reports.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(reportsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = reportsCall![1] as string;
+      const savedReports = JSON.parse(merged) as DelegatedFieldServiceReport[];
+
+      expect(savedReports).toHaveLength(1);
+      expect(savedReports[0].report_id).toBe(patch.report_id);
+      expect(savedReports[0].person_uid).toBe(patch.person_uid);
+      expect(savedReports[0].report_date).toBe(patch.report_date);
+      expect(savedReports[0].updatedAt).toBe(patch.updatedAt);
+      expect(savedReports[0].hours).toBe(patch.hours);
+
+      expect(user.ETag).toBe('v1');
     });
   });
 
@@ -280,6 +448,24 @@ describe('User Model', () => {
       await user.applyBibleStudyPatch(patch);
 
       expect(spy).toHaveBeenCalledWith([{ scope: 'bible_studies', patch }]);
+    });
+
+    it('applyDelegatedFieldServiceReporPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(user, 'applyBatchedChanges');
+
+      const patch: DelegatedFieldServiceReportUpdate = {
+        report_id: 'delegated-report-id',
+        report_date: "2026/01/01",
+        person_uid: 'person-uid',
+        updatedAt: '2026-01-26T12:00:00Z',
+        hours: '20',
+      };
+
+      await user.applyDelegatedFieldServiceReporPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'delegated_field_service_reports', patch },
+      ]);
     });
   });
 });
