@@ -7,6 +7,8 @@ import {
   CongBranchAnalysisUpdate,
   CongSettingsUpdate,
   CongPerson,
+  CongBranchFieldServiceReport,
+  CongBranchFieldServiceReportUpdate,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -55,7 +57,8 @@ describe('Congregation Model', () => {
       if (
         key.includes('mutations.json') ||
         key.includes('persons.json') ||
-        key.includes('branch_cong_analysis.json')
+        key.includes('branch_cong_analysis.json') ||
+        key.includes('branch_field_service_reports.json')
       ) {
         return JSON.stringify([]);
       }
@@ -219,6 +222,42 @@ describe('Congregation Model', () => {
       expect(congregation.ETag).toBe('v1');
     });
 
+    it('should apply a single branch_field_service_reports patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongBranchFieldServiceReportUpdate = {
+        report_date: '2026-02-01',
+        updatedAt: '2026-02-28T12:00:00Z',
+        publishers_active: '120',
+        weekend_meeting_average: '150',
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'branch_field_service_reports', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const reportCall = uploadFileCalls.find((call) =>
+        call[0].includes('branch_field_service_reports.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(reportCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = reportCall![1] as string;
+      const savedReport = JSON.parse(merged) as CongBranchFieldServiceReport[];
+
+      expect(savedReport).toHaveLength(1);
+      expect(savedReport[0].report_date).toBe('2026-02-01');
+      expect(savedReport[0].publishers_active).toBe('120');
+      expect(savedReport[0].weekend_meeting_average).toBe('150');
+      expect(congregation.ETag).toBe('v1');
+    });
+
     it('should apply a single person patch and save with history', async () => {
       await congregation.load();
 
@@ -282,6 +321,22 @@ describe('Congregation Model', () => {
 
       expect(spy).toHaveBeenCalledWith([
         { scope: 'branch_cong_analysis', patch },
+      ]);
+    });
+
+    it('applyBranchFieldServiceReportPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongBranchFieldServiceReportUpdate = {
+        report_date: '2026-03-01',
+        updatedAt: '2026-03-28T12:00:00Z',
+        publishers_active: '130',
+      };
+
+      await congregation.applyBranchFieldServiceReportPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'branch_field_service_reports', patch },
       ]);
     });
 

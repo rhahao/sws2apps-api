@@ -1,6 +1,6 @@
 import { DeepPartial } from './common.types.js';
 
-export type CongScope = 'persons' | 'settings' | 'branch_cong_analysis';
+export type CongScope = 'persons' | 'settings' | 'branch_cong_analysis' | 'branch_field_service_reports';
 
 export interface CongPerson {
   person_uid: string;
@@ -247,7 +247,8 @@ interface CongSettingsClientMutable {
 export type CongSettingsUpdate = DeepPartial<CongSettingsClientMutable>;
 
 export interface CongSettings
-  extends CongSettingsServer, CongSettingsClientMutable {}
+  extends CongSettingsServer,
+    CongSettingsClientMutable {}
 
 export interface CongBranchAnalysis {
   report_date: string;
@@ -260,6 +261,23 @@ export interface CongBranchAnalysis {
 }
 
 export type CongBranchAnalysisUpdate = DeepPartial<CongBranchAnalysis> & {
+  report_date: string;
+  updatedAt: string;
+};
+
+export interface CongBranchFieldServiceReport {
+  report_date: string;
+  _deleted: boolean;
+  updatedAt: string;
+  publishers_active: string;
+  weekend_meeting_average: string;
+  publishers: string;
+  APs: string;
+  FRs: string;
+  submitted: string;
+}
+
+export type CongBranchFieldServiceReportUpdate = DeepPartial<CongBranchFieldServiceReport> & {
   report_date: string;
   updatedAt: string;
 };
@@ -280,6 +298,10 @@ export type CongChange = {
         scope: 'branch_cong_analysis';
         patch: CongBranchAnalysisUpdate;
       }
+      | {
+        scope: 'branch_field_service_reports';
+        patch: CongBranchFieldServiceReportUpdate;
+      }
   )[];
 };
 
@@ -287,5 +309,5 @@ export interface CongPatchContext {
   finalSettings: CongSettings;
   finalBranchAnalysis?: CongBranchAnalysis[];
   finalPersons?: CongPerson[];
-  // Add properties for new scopes here
+  finalBranchFieldServiceReports?: CongBranchFieldServiceReport[];
 }
