@@ -9,6 +9,7 @@ import {
   CongBranchAnalysis,
   CongBranchAnalysisUpdate,
   CongSettingsUpdate,
+  CongPatchContext,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -63,7 +64,7 @@ export class Congregation {
     return { merged, hasChanges };
   }
 
-  private async _saveComponent(fileName: string, data: unknown) {
+  private async saveComponent(fileName: string, data: unknown) {
     if (!data) return;
     try {
       const baseKey = `congregations/${this._id}/`;
@@ -149,7 +150,7 @@ export class Congregation {
 
       for (const entry of scopes) {
         const fileName = `${entry.scope}.json`;
-        uploadPromises.push(this._saveComponent(fileName, entry.data));
+        uploadPromises.push(this.saveComponent(fileName, entry.data));
       }
 
       await Promise.all(uploadPromises);
@@ -164,6 +165,82 @@ export class Congregation {
       );
       throw error;
     }
+  }
+
+  private async handleSettingsPatch(
+    patch: CongSettingsUpdate,
+    context: CongPatchContext
+  ) {
+    const { merged, hasChanges } = applyDeepSyncPatch(
+      context.finalSettings,
+      patch
+    );
+    if (hasChanges) {
+      context.finalSettings = merged as CongSettings;
+    }
+    return { hasChanges, data: context.finalSettings };
+  }
+
+  private async handlePersonsPatch(
+    patch: CongPersonUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalPersons) {
+      context.finalPersons = await this.getPersons();
+    }
+
+    const persons = context.finalPersons;
+    const personUid = patch.person_uid;
+
+    if (!personUid) return { hasChanges: false, data: persons };
+
+    const personIndex = persons.findIndex((p) => p.person_uid === personUid);
+
+    const currentPerson =
+      personIndex !== -1 ? persons[personIndex] : ({ person_uid: personUid } as CongPerson);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentPerson, patch);
+
+    if (hasChanges) {
+      if (personIndex !== -1) {
+        persons[personIndex] = merged as CongPerson;
+      } else {
+        persons.push(merged as CongPerson);
+      }
+    }
+    return { hasChanges, data: persons };
+  }
+
+  private async handleBranchCongAnalysisPatch(
+    patch: CongBranchAnalysisUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalBranchAnalysis) {
+      context.finalBranchAnalysis = await this.getBranchCongAnalysis();
+    }
+
+    const analysis = context.finalBranchAnalysis;
+    const reportId = patch.report_date;
+
+    if (!reportId) return { hasChanges: false, data: analysis };
+
+    const reportIndex = analysis.findIndex((r) => r.report_date === reportId);
+
+    const currentReport =
+      reportIndex !== -1
+        ? analysis[reportIndex]
+        : ({ report_date: reportId } as CongBranchAnalysis);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+
+    if (hasChanges) {
+      if (reportIndex !== -1) {
+        analysis[reportIndex] = merged as CongBranchAnalysis;
+      } else {
+        analysis.push(merged as CongBranchAnalysis);
+      }
+    }
+    return { hasChanges, data: analysis };
   }
 
   // --- Public Method ---
@@ -251,7 +328,7 @@ export class Congregation {
 
   public async savePersons(persons: CongPerson[]) {
     try {
-      await this._saveComponent('persons.json', persons);
+      await this.saveComponent('persons.json', persons);
       await this.bumpETag();
       logger.info(
         `Saved ${persons.length} persons and bumped ETag for congregation ${this._id}`
@@ -266,7 +343,7 @@ export class Congregation {
     analysis: CongBranchAnalysis[]
   ): Promise<void> {
     try {
-      await this._saveComponent('branch_cong_analysis.json', analysis);
+      await this.saveComponent('branch_cong_analysis.json', analysis);
       await this.bumpETag();
       logger.info(
         `Saved branch_cong_analysis and bumped ETag for congregation ${this._id}`
@@ -281,7 +358,7 @@ export class Congregation {
   }
 
   public async saveMutations(changes: CongChange[]) {
-    await this._saveComponent('mutations.json', changes);
+    await this.saveComponent('mutations.json', changes);
   }
 
   public async fetchMutations(): Promise<CongChange[]> {
@@ -309,10 +386,7 @@ export class Congregation {
     return [];
   }
 
-  public cleanupMutations(
-    changes: CongChange[],
-    cutoffDate?: Date
-  ): { pruned: CongChange[]; hasChanged: boolean } {
+  public cleanupMutations(changes: CongChange[], cutoffDate?: Date) {
     if (!changes || changes.length === 0) {
       return { pruned: [], hasChanged: false };
     }
@@ -333,132 +407,53 @@ export class Congregation {
 
   public async applyBatchedChanges(changes: CongChange['changes']) {
     try {
+      type ScopeData = CongSettings | CongPerson[] | CongBranchAnalysis[];
+
       const recordedMutations: CongChange['changes'] = [];
-      const scopesToSave: { scope: CongScope; data: object }[] = [];
 
-      let finalSettings = this._settings || {};
-      let finalBranchAnalysis: CongBranchAnalysis[] | undefined;
-      let finalPersons: CongPerson[] | undefined;
+      const scopesToSave = new Map<CongScope, ScopeData>();
 
-      let hasGlobalChanges = false;
+      const context: CongPatchContext = {
+        finalSettings: this._settings || ({} as CongSettings),
+        finalBranchAnalysis: undefined,
+        finalPersons: undefined,
+      };
 
       for (const change of changes) {
-        // --- SETTINGS SCOPE ---
-        if (change.scope === 'settings') {
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            finalSettings,
-            change.patch
-          );
+        let result: { hasChanges: boolean; data: ScopeData } | undefined;
 
-          if (hasChanges) {
-            finalSettings = merged as CongSettings;
-            recordedMutations.push({ scope: 'settings', patch: change.patch });
-            hasGlobalChanges = true;
+        switch (change.scope) {
+          case 'settings': {
+            result = await this.handleSettingsPatch(change.patch, context);
+            break;
+          }
+          case 'persons': {
+            result = await this.handlePersonsPatch(change.patch, context);
+            break;
+          }
+          case 'branch_cong_analysis': {
+            result = await this.handleBranchCongAnalysisPatch(
+              change.patch,
+              context
+            );
+            break;
           }
         }
 
-        // --- BRANCH CONG ANALYSIS SCOPE ---
-        if (change.scope === 'branch_cong_analysis') {
-          if (!finalBranchAnalysis)
-            finalBranchAnalysis = await this.getBranchCongAnalysis();
-
-          const patch = change.patch;
-          const reportId = patch.report_date;
-
-          if (!reportId) continue;
-
-          const reportIndex = finalBranchAnalysis.findIndex(
-            (r) => r.report_date === reportId
-          );
-
-          let currentReport: CongBranchAnalysisUpdate;
-
-          if (reportIndex !== -1) {
-            currentReport = finalBranchAnalysis[reportIndex];
-          } else {
-            currentReport = {
-              report_date: reportId,
-            } as CongBranchAnalysisUpdate;
-          }
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            currentReport,
-            patch
-          );
-
-          if (hasChanges) {
-            if (reportIndex !== -1) {
-              finalBranchAnalysis[reportIndex] = merged as CongBranchAnalysis;
-            } else {
-              finalBranchAnalysis.push(merged as CongBranchAnalysis);
-            }
-
-            recordedMutations.push({ scope: 'branch_cong_analysis', patch });
-            hasGlobalChanges = true;
-          }
-        }
-
-        // --- PERSONS SCOPE ---
-        if (change.scope === 'persons') {
-          if (!finalPersons) finalPersons = await this.getPersons();
-
-          const patch = change.patch;
-          const personUid = patch.person_uid;
-
-          if (!personUid) continue;
-
-          const personIndex = finalPersons.findIndex(
-            (p) => p.person_uid === personUid
-          );
-
-          let currentPerson: CongPersonUpdate;
-
-          if (personIndex !== -1) {
-            currentPerson = finalPersons[personIndex];
-          } else {
-            currentPerson = {
-              person_uid: personUid,
-            } as CongPersonUpdate;
-          }
-
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            currentPerson,
-            patch
-          );
-
-          if (hasChanges) {
-            if (personIndex !== -1) {
-              finalPersons[personIndex] = merged as CongPerson;
-            } else {
-              finalPersons.push(merged as CongPerson);
-            }
-
-            recordedMutations.push({ scope: 'persons', patch });
-            hasGlobalChanges = true;
-          }
+        if (result && result.hasChanges) {
+          recordedMutations.push(change);
+          scopesToSave.set(change.scope, result.data);
         }
       }
 
-      if (hasGlobalChanges) {
-        // Aggregate final data for all modified scopes
-        if (finalSettings) {
-          scopesToSave.push({ scope: 'settings', data: finalSettings });
-          this._settings = finalSettings; // Update internal state
-        }
+      if (recordedMutations.length > 0) {
+        this._settings = context.finalSettings; // Update internal state
 
-        if (finalBranchAnalysis) {
-          scopesToSave.push({
-            scope: 'branch_cong_analysis',
-            data: finalBranchAnalysis,
-          });
-        }
+        const finalScopes = Array.from(scopesToSave.entries()).map(
+          ([scope, data]) => ({ scope, data })
+        );
 
-        if (finalPersons) {
-          scopesToSave.push({ scope: 'persons', data: finalPersons });
-        }
-
-        // Pass structured payload to orchestrator
-        await this.saveWithHistory(recordedMutations, scopesToSave);
+        await this.saveWithHistory(recordedMutations, finalScopes);
 
         logger.info(
           `Successfully applied batch: ${recordedMutations.length} mutations for congregation ${this._id}`
@@ -468,7 +463,7 @@ export class Congregation {
           `No changes to apply from batch for congregation ${this._id}`
         );
       }
-    } catch (error: unknown) {
+    } catch (error) {
       logger.error(`Error applying batched changes for ${this._id}:`, error);
       throw error;
     }
@@ -487,7 +482,7 @@ export class Congregation {
       this._settings = merged as CongSettings;
 
       try {
-        await this._saveComponent('settings.json', this._settings);
+        await this.saveComponent('settings.json', this._settings);
 
         logger.info(
           `Server settings patch applied for congregation ${this._id} (quiet)`

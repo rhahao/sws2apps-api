@@ -282,3 +282,10 @@ export type CongChange = {
       }
   )[];
 };
+
+export interface CongPatchContext {
+  finalSettings: CongSettings;
+  finalBranchAnalysis?: CongBranchAnalysis[];
+  finalPersons?: CongPerson[];
+  // Add properties for new scopes here
+}
