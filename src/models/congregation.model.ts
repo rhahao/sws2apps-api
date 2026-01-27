@@ -16,6 +16,8 @@ import {
   CongFieldServiceReportUpdate,
   CongFieldServiceGroupUpdate,
   CongFieldServiceGroup,
+  CongMeetingAttendance,
+  CongMeetingAttendanceUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -345,6 +347,38 @@ export class Congregation {
     return { hasChanges, data: groups };
   }
 
+  private async handleCongMeetingAttendancePatch(
+    patch: CongMeetingAttendanceUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalMeetingAttendance) {
+      context.finalMeetingAttendance = await this.getCongMeetingAttendance();
+    }
+
+    const attendance = context.finalMeetingAttendance;
+    const monthId = patch.month_date;
+
+    if (!monthId) return { hasChanges: false, data: attendance };
+
+    const monthIndex = attendance.findIndex((r) => r.month_date === monthId);
+
+    const currentMonth =
+      monthIndex !== -1
+        ? attendance[monthIndex]
+        : ({ month_date: monthId } as CongMeetingAttendance);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentMonth, patch);
+
+    if (hasChanges) {
+      if (monthIndex !== -1) {
+        attendance[monthIndex] = merged as CongMeetingAttendance;
+      } else {
+        attendance.push(merged as CongMeetingAttendance);
+      }
+    }
+    return { hasChanges, data: attendance };
+  }
+
   // --- Public Method ---
 
   public async load() {
@@ -478,6 +512,22 @@ export class Congregation {
     }
   }
 
+  public async getCongMeetingAttendance(): Promise<CongMeetingAttendance[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/meeting_attendance.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} meeting_attendance:`,
+        error
+      );
+      return [];
+    }
+  }
+
   public async savePersons(persons: CongPerson[]) {
     try {
       await this.saveComponent('persons.json', persons);
@@ -563,6 +613,25 @@ export class Congregation {
     }
   }
 
+  public async saveCongMeetingAttendance(
+    reports: CongMeetingAttendance[]
+  ): Promise<void> {
+    try {
+      await this.saveComponent('meeting_attendance.json', reports);
+      await this.bumpETag();
+
+      logger.info(
+        `Saved meeting_attendance and bumped ETag for congregation ${this._id}`
+      );
+    } catch (error: unknown) {
+      logger.error(
+        `Error saving meeting_attendance for congregation ${this._id}:`,
+        error
+      );
+      throw error;
+    }
+  }
+
   public async saveMutations(changes: CongChange[]) {
     await this.saveComponent('mutations.json', changes);
   }
@@ -620,7 +689,8 @@ export class Congregation {
         | CongBranchAnalysis[]
         | CongBranchFieldServiceReport[]
         | CongFieldServiceReport[]
-        | CongFieldServiceGroup[];
+        | CongFieldServiceGroup[]
+        | CongMeetingAttendance[];
 
       const recordedMutations: CongChange['changes'] = [];
 
@@ -633,6 +703,7 @@ export class Congregation {
         finalBranchFieldServiceReports: undefined,
         finalCongFieldServiceReports: undefined,
         finalFieldServiceGroups: undefined,
+        finalMeetingAttendance: undefined,
       };
 
       for (const change of changes) {
@@ -670,6 +741,13 @@ export class Congregation {
           }
           case 'field_service_groups': {
             result = await this.handleCongFieldServiceGroupsPatch(
+              change.patch,
+              context
+            );
+            break;
+          }
+          case 'meeting_attendance': {
+            result = await this.handleCongMeetingAttendancePatch(
               change.patch,
               context
             );
@@ -762,8 +840,12 @@ export class Congregation {
   public async applyCongFieldServiceGroupPatch(
     patch: CongFieldServiceGroupUpdate
   ) {
-    return this.applyBatchedChanges([
-      { scope: 'field_service_groups', patch },
-    ]);
+    return this.applyBatchedChanges([{ scope: 'field_service_groups', patch }]);
+  }
+
+  public async applyCongMeetingAttendancePatch(
+    patch: CongMeetingAttendanceUpdate
+  ) {
+    return this.applyBatchedChanges([{ scope: 'meeting_attendance', patch }]);
   }
 }

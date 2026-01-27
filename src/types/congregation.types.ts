@@ -318,13 +318,40 @@ export type CongFieldServiceGroupUpdate = DeepPartial<CongFieldServiceGroup> & {
   updatedAt: string;
 };
 
+interface AttendanceCongregation {
+  present: string;
+  online: string;
+  type: string;
+  updatedAt: string;
+}
+
+interface WeeklyAttendance {
+  midweek: AttendanceCongregation[];
+  weekend: AttendanceCongregation[];
+}
+
+export interface CongMeetingAttendance {
+  month_date: string;
+  _deleted: { value: boolean; updatedAt: string };
+  week_1: WeeklyAttendance;
+  week_2: WeeklyAttendance;
+  week_3: WeeklyAttendance;
+  week_4: WeeklyAttendance;
+  week_5: WeeklyAttendance;
+}
+
+export type CongMeetingAttendanceUpdate = DeepPartial<CongMeetingAttendance> & {
+  month_date: string;
+};
+
 export type CongScope =
   | 'persons'
   | 'settings'
   | 'branch_cong_analysis'
   | 'branch_field_service_reports'
   | 'cong_field_service_reports'
-  | 'field_service_groups';
+  | 'field_service_groups'
+  | 'meeting_attendance';
 
 export type CongChange = {
   ETag: string;
@@ -354,6 +381,10 @@ export type CongChange = {
         scope: 'field_service_groups';
         patch: CongFieldServiceGroupUpdate;
       }
+    | {
+        scope: 'meeting_attendance';
+        patch: CongMeetingAttendanceUpdate;
+      }
   )[];
 };
 
@@ -364,4 +395,5 @@ export interface CongPatchContext {
   finalBranchFieldServiceReports?: CongBranchFieldServiceReport[];
   finalCongFieldServiceReports?: CongFieldServiceReport[];
   finalFieldServiceGroups?: CongFieldServiceGroup[];
+  finalMeetingAttendance?: CongMeetingAttendance[]
 }

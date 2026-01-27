@@ -13,6 +13,8 @@ import {
   CongFieldServiceReportUpdate,
   CongFieldServiceGroupUpdate,
   CongFieldServiceGroup,
+  CongMeetingAttendanceUpdate,
+  CongMeetingAttendance,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -64,7 +66,8 @@ describe('Congregation Model', () => {
         key.includes('branch_cong_analysis.json') ||
         key.includes('branch_field_service_reports.json') ||
         key.includes('cong_field_service_reports.json') ||
-        key.includes('field_service_groups.json')
+        key.includes('field_service_groups.json') ||
+        key.includes('meeting_attendance.json')
       ) {
         return JSON.stringify([]);
       }
@@ -337,6 +340,52 @@ describe('Congregation Model', () => {
       expect(congregation.ETag).toBe('v1');
     });
 
+    it('should apply a single meeting_attendance patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongMeetingAttendanceUpdate = {
+        month_date: '2026/01',
+        week_1: {
+          midweek: [
+            { type: 'main', updatedAt: '2026-01-26T12:00:00Z', present: '30' },
+          ],
+        },
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'meeting_attendance', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const attendanceCall = uploadFileCalls.find((call) =>
+        call[0].includes('meeting_attendance.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(attendanceCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = attendanceCall![1] as string;
+      const savedData = JSON.parse(merged) as CongMeetingAttendance[];
+
+      expect(savedData).toHaveLength(1);
+      expect(savedData[0].month_date).toBe(patch.month_date);
+      expect(savedData[0].week_1.midweek[0].type).toBe(
+        patch.week_1!.midweek![0].type
+      );
+      expect(savedData[0].week_1.midweek[0].present).toBe(
+        patch.week_1!.midweek![0].present
+      );
+      expect(savedData[0].week_1.midweek[0].updatedAt).toBe(
+        patch.week_1!.midweek![0].updatedAt
+      );
+
+      expect(congregation.ETag).toBe('v1');
+    });
+
     it('should apply a single persons patch and save with history', async () => {
       await congregation.load();
 
@@ -449,6 +498,25 @@ describe('Congregation Model', () => {
 
       expect(spy).toHaveBeenCalledWith([
         { scope: 'field_service_groups', patch },
+      ]);
+    });
+
+    it('applyCongMeetingAttendancePatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongMeetingAttendanceUpdate = {
+        month_date: '2026/02',
+        week_2: {
+          weekend: [
+            { type: 'main', updatedAt: '2026-01-26T12:00:00Z', present: '20' },
+          ],
+        },
+      };
+
+      await congregation.applyCongMeetingAttendancePatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'meeting_attendance', patch },
       ]);
     });
 
