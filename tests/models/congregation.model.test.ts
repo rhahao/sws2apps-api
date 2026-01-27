@@ -9,6 +9,8 @@ import {
   CongPerson,
   CongBranchFieldServiceReport,
   CongBranchFieldServiceReportUpdate,
+  CongFieldServiceReport,
+  CongFieldServiceReportUpdate,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -58,7 +60,8 @@ describe('Congregation Model', () => {
         key.includes('mutations.json') ||
         key.includes('persons.json') ||
         key.includes('branch_cong_analysis.json') ||
-        key.includes('branch_field_service_reports.json')
+        key.includes('branch_field_service_reports.json') ||
+        key.includes('cong_field_service_reports.json')
       ) {
         return JSON.stringify([]);
       }
@@ -258,7 +261,44 @@ describe('Congregation Model', () => {
       expect(congregation.ETag).toBe('v1');
     });
 
-    it('should apply a single person patch and save with history', async () => {
+    it('should apply a single cong_field_service_reports patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongFieldServiceReportUpdate = {
+        report_id: 'report-1',
+        report_date: '2026-04-01',
+        updatedAt: '2026-04-28T12:00:00Z',
+        hours: '10',
+        bible_studies: '5',
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'cong_field_service_reports', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const reportCall = uploadFileCalls.find((call) =>
+        call[0].includes('cong_field_service_reports.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(reportCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = reportCall![1] as string;
+      const savedReport = JSON.parse(merged) as CongFieldServiceReport[];
+
+      expect(savedReport).toHaveLength(1);
+      expect(savedReport[0].report_id).toBe('report-1');
+      expect(savedReport[0].hours).toBe('10');
+      expect(savedReport[0].bible_studies).toBe('5');
+      expect(congregation.ETag).toBe('v1');
+    });
+
+    it('should apply a single persons patch and save with history', async () => {
       await congregation.load();
 
       const patch: CongPersonUpdate = {
@@ -337,6 +377,23 @@ describe('Congregation Model', () => {
 
       expect(spy).toHaveBeenCalledWith([
         { scope: 'branch_field_service_reports', patch },
+      ]);
+    });
+
+    it('applyCongFieldServiceReportPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongFieldServiceReportUpdate = {
+        report_id: 'report-2',
+        report_date: '2026-05-01',
+        updatedAt: '2026-05-28T12:00:00Z',
+        hours: '15',
+      };
+
+      await congregation.applyCongFieldServiceReportPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'cong_field_service_reports', patch },
       ]);
     });
 

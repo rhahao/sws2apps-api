@@ -1,6 +1,11 @@
 import { DeepPartial } from './common.types.js';
 
-export type CongScope = 'persons' | 'settings' | 'branch_cong_analysis' | 'branch_field_service_reports';
+export type CongScope =
+  | 'persons'
+  | 'settings'
+  | 'branch_cong_analysis'
+  | 'branch_field_service_reports'
+  | 'cong_field_service_reports';
 
 export interface CongPerson {
   person_uid: string;
@@ -267,7 +272,7 @@ export type CongBranchAnalysisUpdate = DeepPartial<CongBranchAnalysis> & {
 
 export interface CongBranchFieldServiceReport {
   report_date: string;
-  _deleted: boolean;
+  _deleted: string;
   updatedAt: string;
   publishers_active: string;
   weekend_meeting_average: string;
@@ -277,10 +282,31 @@ export interface CongBranchFieldServiceReport {
   submitted: string;
 }
 
-export type CongBranchFieldServiceReportUpdate = DeepPartial<CongBranchFieldServiceReport> & {
-  report_date: string;
+export type CongBranchFieldServiceReportUpdate =
+  DeepPartial<CongBranchFieldServiceReport> & {
+    report_date: string;
+    updatedAt: string;
+  };
+
+export interface CongFieldServiceReport {
+  report_id: string;
+  _deleted: string;
   updatedAt: string;
-};
+  report_date: string;
+  person_uid: string;
+  shared_ministry: string;
+  hours: string;
+  bible_studies: string;
+  comments: string;
+  late: string;
+  status: string;
+}
+
+export type CongFieldServiceReportUpdate =
+  DeepPartial<CongFieldServiceReport> & {
+    report_date: string;
+    updatedAt: string;
+  };
 
 export type CongChange = {
   ETag: string;
@@ -298,9 +324,13 @@ export type CongChange = {
         scope: 'branch_cong_analysis';
         patch: CongBranchAnalysisUpdate;
       }
-      | {
+    | {
         scope: 'branch_field_service_reports';
         patch: CongBranchFieldServiceReportUpdate;
+      }
+    | {
+        scope: 'cong_field_service_reports';
+        patch: CongFieldServiceReportUpdate;
       }
   )[];
 };
@@ -310,4 +340,5 @@ export interface CongPatchContext {
   finalBranchAnalysis?: CongBranchAnalysis[];
   finalPersons?: CongPerson[];
   finalBranchFieldServiceReports?: CongBranchFieldServiceReport[];
+  finalCongFieldServiceReports?: CongFieldServiceReport[];
 }

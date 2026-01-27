@@ -12,6 +12,8 @@ import {
   CongPatchContext,
   CongBranchFieldServiceReport,
   CongBranchFieldServiceReportUpdate,
+  CongFieldServiceReport,
+  CongFieldServiceReportUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -250,7 +252,8 @@ export class Congregation {
     context: CongPatchContext
   ) {
     if (!context.finalBranchFieldServiceReports) {
-      context.finalBranchFieldServiceReports = await this.getBranchFieldServiceReports();
+      context.finalBranchFieldServiceReports =
+        await this.getBranchFieldServiceReports();
     }
     const reports = context.finalBranchFieldServiceReports;
     const reportId = patch.report_date;
@@ -270,6 +273,37 @@ export class Congregation {
         reports[reportIndex] = merged as CongBranchFieldServiceReport;
       } else {
         reports.push(merged as CongBranchFieldServiceReport);
+      }
+    }
+    return { hasChanges, data: reports };
+  }
+
+  private async handleCongFieldServiceReportsPatch(
+    patch: CongFieldServiceReportUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalCongFieldServiceReports) {
+      context.finalCongFieldServiceReports =
+        await this.getCongFieldServiceReports();
+    }
+    const reports = context.finalCongFieldServiceReports;
+    const reportId = patch.report_id;
+
+    if (!reportId) return { hasChanges: false, data: reports };
+
+    const reportIndex = reports.findIndex((r) => r.report_id === reportId);
+    const currentReport =
+      reportIndex !== -1
+        ? reports[reportIndex]
+        : ({ report_id: reportId } as CongFieldServiceReport);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+
+    if (hasChanges) {
+      if (reportIndex !== -1) {
+        reports[reportIndex] = merged as CongFieldServiceReport;
+      } else {
+        reports.push(merged as CongFieldServiceReport);
       }
     }
     return { hasChanges, data: reports };
@@ -345,7 +379,9 @@ export class Congregation {
     }
   }
 
-  public async getBranchFieldServiceReports(): Promise<CongBranchFieldServiceReport[]> {
+  public async getBranchFieldServiceReports(): Promise<
+    CongBranchFieldServiceReport[]
+  > {
     try {
       const content = await s3Service.getFile(
         `congregations/${this._id}/branch_field_service_reports.json`
@@ -355,6 +391,22 @@ export class Congregation {
     } catch (error: unknown) {
       logger.error(
         `Error loading congregation ${this._id} branch_field_service_reports:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  public async getCongFieldServiceReports(): Promise<CongFieldServiceReport[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/cong_field_service_reports.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} cong_field_service_reports:`,
         error
       );
       return [];
@@ -423,6 +475,24 @@ export class Congregation {
     }
   }
 
+  public async saveCongFieldServiceReports(
+    reports: CongFieldServiceReport[]
+  ): Promise<void> {
+    try {
+      await this.saveComponent('cong_field_service_reports.json', reports);
+      await this.bumpETag();
+      logger.info(
+        `Saved cong_field_service_reports and bumped ETag for congregation ${this._id}`
+      );
+    } catch (error: unknown) {
+      logger.error(
+        `Error saving cong_field_service_reports for congregation ${this._id}:`,
+        error
+      );
+      throw error;
+    }
+  }
+
   public async saveMutations(changes: CongChange[]) {
     await this.saveComponent('mutations.json', changes);
   }
@@ -477,7 +547,8 @@ export class Congregation {
         | CongSettings
         | CongPerson[]
         | CongBranchAnalysis[]
-        | CongBranchFieldServiceReport[];
+        | CongBranchFieldServiceReport[]
+        | CongFieldServiceReport[];
 
       const recordedMutations: CongChange['changes'] = [];
 
@@ -488,6 +559,7 @@ export class Congregation {
         finalBranchAnalysis: undefined,
         finalPersons: undefined,
         finalBranchFieldServiceReports: undefined,
+        finalCongFieldServiceReports: undefined,
       };
 
       for (const change of changes) {
@@ -511,6 +583,13 @@ export class Congregation {
           }
           case 'branch_field_service_reports': {
             result = await this.handleBranchFieldServiceReportsPatch(
+              change.patch,
+              context
+            );
+            break;
+          }
+          case 'cong_field_service_reports': {
+            result = await this.handleCongFieldServiceReportsPatch(
               change.patch,
               context
             );
@@ -589,6 +668,14 @@ export class Congregation {
   ) {
     return this.applyBatchedChanges([
       { scope: 'branch_field_service_reports', patch },
+    ]);
+  }
+
+  public async applyCongFieldServiceReportPatch(
+    patch: CongFieldServiceReportUpdate
+  ) {
+    return this.applyBatchedChanges([
+      { scope: 'cong_field_service_reports', patch },
     ]);
   }
 }
