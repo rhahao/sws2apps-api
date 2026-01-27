@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import {
-  CongregationChange,
-  CongregationPersonUpdate,
-  CongregationSettingsServerUpdate,
+  CongChange,
+  CongPersonUpdate,
+  CongSettingsServerUpdate,
+  CongBranchAnalysis,
+  CongBranchAnalysisUpdate,
+  CongSettingsUpdate,
+  CongPerson,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -48,7 +52,11 @@ describe('Congregation Model', () => {
         });
       }
 
-      if (key.includes('mutations.json') || key.includes('persons.json')) {
+      if (
+        key.includes('mutations.json') ||
+        key.includes('persons.json') ||
+        key.includes('branch_cong_analysis.json')
+      ) {
         return JSON.stringify([]);
       }
       return null;
@@ -63,7 +71,7 @@ describe('Congregation Model', () => {
     it('should apply a server settings patch without bumping ETag or saving history', async () => {
       await congregation.load(); // ETag is 'v0' after load
 
-      const serverPatch: CongregationSettingsServerUpdate = {
+      const serverPatch: CongSettingsServerUpdate = {
         cong_name: 'Updated Congregation Name',
       };
 
@@ -95,7 +103,7 @@ describe('Congregation Model', () => {
     it('should process multiple scopes in one S3 transaction', async () => {
       await congregation.load();
 
-      const batch: CongregationChange['changes'] = [
+      const batch: CongChange['changes'] = [
         {
           scope: 'settings',
           patch: {
@@ -143,14 +151,144 @@ describe('Congregation Model', () => {
 
       expect(congregation.ETag).toBe('v1');
     });
+
+    it('should apply a single settings patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongSettingsUpdate = {
+        time_away_public: { value: true, updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'settings', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const settingsCall = uploadFileCalls.find((call) =>
+        call[0].includes('settings.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(settingsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      expect(congregation.settings).toHaveProperty('time_away_public');
+      expect(congregation.settings.time_away_public!.value).toBe(true);
+      expect(congregation.settings.time_away_public!.updatedAt).toBe(
+        '2026-01-26T12:00:00Z'
+      );
+      expect(congregation.ETag).toBe('v1');
+    });
+
+    it('should apply a single branch_cong_analysis patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongBranchAnalysisUpdate = {
+        report_date: '2026-01-01',
+        updatedAt: '2026-01-26T12:00:00Z',
+        meeting_average: '100',
+        publishers: '50',
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'branch_cong_analysis', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const analysisCall = uploadFileCalls.find((call) =>
+        call[0].includes('branch_cong_analysis.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(analysisCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = analysisCall![1] as string;
+      const savedAnalysis = JSON.parse(merged) as CongBranchAnalysis[];
+
+      expect(savedAnalysis).toHaveLength(1);
+      expect(savedAnalysis[0].report_date).toBe('2026-01-01');
+      expect(savedAnalysis[0].meeting_average).toBe('100');
+      expect(savedAnalysis[0].publishers).toBe('50');
+      expect(congregation.ETag).toBe('v1');
+    });
+
+    it('should apply a single person patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongPersonUpdate = {
+        person_uid: 'person-1',
+        person_firstname: { value: 'John', updatedAt: '2026-01-26T12:00:00Z' },
+        person_lastname: { value: 'Doe', updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'persons', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const personsCall = uploadFileCalls.find((call) =>
+        call[0].includes('persons.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(personsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = personsCall![1] as string;
+      const savedPersons = JSON.parse(merged) as CongPerson[];
+
+      expect(savedPersons).toHaveLength(1);
+      expect(savedPersons[0].person_uid).toBe('person-1');
+      expect(savedPersons[0].person_firstname.value).toBe('John');
+      expect(savedPersons[0].person_lastname.value).toBe('Doe');
+      expect(congregation.ETag).toBe('v1');
+    });
   });
 
   // --- CONVENIENCE WRAPPER TESTS ---
   describe('Convenience Wrappers (Plumbing)', () => {
+    it('applyCongSettingsPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongSettingsUpdate = {
+        time_away_public: { value: true, updatedAt: '2026-01-26T12:00:00Z' },
+      };
+
+      await congregation.applyCongSettingsPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([{ scope: 'settings', patch }]);
+    });
+
+    it('applyBranchCongAnalysisPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongBranchAnalysisUpdate = {
+        report_date: '2026-01-01',
+        updatedAt: '2026-01-26T12:00:00Z',
+        meeting_average: '100',
+      };
+
+      await congregation.applyBranchCongAnalysisPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'branch_cong_analysis', patch },
+      ]);
+    });
+
     it('applyPersonPatch should route correctly to batched engine', async () => {
       const spy = vi.spyOn(congregation, 'applyBatchedChanges');
 
-      const patch: CongregationPersonUpdate = {
+      const patch: CongPersonUpdate = {
         person_uid: 'person-1',
         person_firstname: { value: 'John', updatedAt: '2026-01-26T12:00:00Z' },
         person_lastname: { value: 'Doe', updatedAt: '2026-01-26T12:00:00Z' },

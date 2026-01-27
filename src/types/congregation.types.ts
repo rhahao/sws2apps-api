@@ -1,8 +1,8 @@
 import { DeepPartial } from './common.types.js';
 
-export type CongregationScope = 'persons' | 'settings';
+export type CongScope = 'persons' | 'settings' | 'branch_cong_analysis';
 
-export interface CongregationPerson {
+export interface CongPerson {
   person_uid: string;
   _deleted: { value: string; updatedAt: string };
   person_firstname: { value: string; updatedAt: string };
@@ -85,11 +85,11 @@ export interface CongregationPerson {
   family_members: { head: string; members: string; updatedAt: string };
 }
 
-export type CongregationPersonUpdate = DeepPartial<CongregationPerson> & {
+export type CongPersonUpdate = DeepPartial<CongPerson> & {
   person_uid: string;
 };
 
-export interface CongregationSettingsServer {
+export interface CongSettingsServer {
   country_code: string;
   country_guid: string;
   cong_prefix: string;
@@ -99,10 +99,9 @@ export interface CongregationSettingsServer {
   cong_new: boolean;
 }
 
-export type CongregationSettingsServerUpdate =
-  DeepPartial<CongregationSettingsServer>;
+export type CongSettingsServerUpdate = DeepPartial<CongSettingsServer>;
 
-interface CongregationSettingsClientMutable {
+interface CongSettingsClientMutable {
   cong_number: { value: string; updatedAt: string };
   cong_location: {
     address: string;
@@ -245,23 +244,41 @@ interface CongregationSettingsClientMutable {
   }[];
 }
 
-export type CongregationSettingsUpdate =
-  DeepPartial<CongregationSettingsClientMutable>;
+export type CongSettingsUpdate = DeepPartial<CongSettingsClientMutable>;
 
-export interface CongregationSettings
-  extends CongregationSettingsServer, CongregationSettingsClientMutable {}
+export interface CongSettings
+  extends CongSettingsServer, CongSettingsClientMutable {}
 
-export type CongregationChange = {
+export interface CongBranchAnalysis {
+  report_date: string;
+  _deleted: string;
+  updatedAt: string;
+  meeting_average: string;
+  publishers: string;
+  territories: string;
+  submitted: string;
+}
+
+export type CongBranchAnalysisUpdate = DeepPartial<CongBranchAnalysis> & {
+  report_date: string;
+  updatedAt: string;
+};
+
+export type CongChange = {
   ETag: string;
   timestamp: string;
   changes: (
     | {
         scope: 'persons';
-        patch: CongregationPersonUpdate;
+        patch: CongPersonUpdate;
       }
     | {
         scope: 'settings';
-        patch: CongregationSettingsUpdate;
+        patch: CongSettingsUpdate;
+      }
+    | {
+        scope: 'branch_cong_analysis';
+        patch: CongBranchAnalysisUpdate;
       }
   )[];
 };

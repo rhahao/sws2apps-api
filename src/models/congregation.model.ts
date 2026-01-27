@@ -1,11 +1,14 @@
 import {
-  CongregationChange,
-  CongregationPerson,
-  CongregationPersonUpdate,
-  CongregationScope,
-  CongregationSettings,
-  CongregationSettingsServer,
-  CongregationSettingsServerUpdate,
+  CongChange,
+  CongPerson,
+  CongPersonUpdate,
+  CongScope,
+  CongSettings,
+  CongSettingsServer,
+  CongSettingsServerUpdate,
+  CongBranchAnalysis,
+  CongBranchAnalysisUpdate,
+  CongSettingsUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -14,7 +17,7 @@ export class Congregation {
   private _id: string;
   private _flags: string[] = [];
   private _ETag: string = 'v0';
-  private _settings = {} as CongregationSettings;
+  private _settings = {} as CongSettings;
 
   constructor(id: string) {
     this._id = id;
@@ -39,16 +42,16 @@ export class Congregation {
   // --- Private Method ---
 
   private applyCongregationServerChange(
-    current: CongregationSettings,
-    patch: CongregationSettingsServerUpdate
+    current: CongSettings,
+    patch: CongSettingsServerUpdate
   ) {
-    const merged: CongregationSettings = { ...current };
+    const merged: CongSettings = { ...current };
 
     let hasChanges = false;
 
     // Entries gives you the key and value together
     for (const [key, newVal] of Object.entries(patch)) {
-      const k = key as keyof CongregationSettingsServer;
+      const k = key as keyof CongSettingsServer;
 
       if (newVal !== undefined && merged[k] !== newVal) {
         // We still need a narrow cast for assignment, but we avoid 'any'
@@ -120,8 +123,8 @@ export class Congregation {
   }
 
   private async saveWithHistory(
-    recordedMutations: CongregationChange['changes'],
-    scopes: { scope: CongregationScope; data: object }[]
+    recordedMutations: CongChange['changes'],
+    scopes: { scope: CongScope; data: object }[]
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
@@ -217,7 +220,23 @@ export class Congregation {
     }
   }
 
-  public async getPersons(): Promise<CongregationPerson[]> {
+  public async getBranchCongAnalysis(): Promise<CongBranchAnalysis[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/branch_cong_analysis.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} branch_cong_analysis:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  public async getPersons(): Promise<CongPerson[]> {
     try {
       const content = await s3Service.getFile(
         `congregations/${this._id}/persons.json`
@@ -230,7 +249,7 @@ export class Congregation {
     }
   }
 
-  public async savePersons(persons: CongregationPerson[]) {
+  public async savePersons(persons: CongPerson[]) {
     try {
       await this._saveComponent('persons.json', persons);
       await this.bumpETag();
@@ -243,17 +262,35 @@ export class Congregation {
     }
   }
 
-  public async saveMutations(changes: CongregationChange[]) {
+  public async saveBranchCongAnalysis(
+    analysis: CongBranchAnalysis[]
+  ): Promise<void> {
+    try {
+      await this._saveComponent('branch_cong_analysis.json', analysis);
+      await this.bumpETag();
+      logger.info(
+        `Saved branch_cong_analysis and bumped ETag for congregation ${this._id}`
+      );
+    } catch (error: unknown) {
+      logger.error(
+        `Error saving branch_cong_analysis for congregation ${this._id}:`,
+        error
+      );
+      throw error;
+    }
+  }
+
+  public async saveMutations(changes: CongChange[]) {
     await this._saveComponent('mutations.json', changes);
   }
 
-  public async fetchMutations(): Promise<CongregationChange[]> {
+  public async fetchMutations(): Promise<CongChange[]> {
     try {
       const key = `congregations/${this._id}/mutations.json`;
       const content = await s3Service.getFile(key);
 
       if (content) {
-        const mutations: CongregationChange[] = JSON.parse(content);
+        const mutations: CongChange[] = JSON.parse(content);
 
         // Perform on-demand cleanup
         const { pruned, hasChanged } = this.cleanupMutations(mutations);
@@ -273,9 +310,9 @@ export class Congregation {
   }
 
   public cleanupMutations(
-    changes: CongregationChange[],
+    changes: CongChange[],
     cutoffDate?: Date
-  ): { pruned: CongregationChange[]; hasChanged: boolean } {
+  ): { pruned: CongChange[]; hasChanged: boolean } {
     if (!changes || changes.length === 0) {
       return { pruned: [], hasChanged: false };
     }
@@ -294,17 +331,73 @@ export class Congregation {
     return { pruned, hasChanged: pruned.length < initialLength };
   }
 
-  public async applyBatchedChanges(changes: CongregationChange['changes']) {
+  public async applyBatchedChanges(changes: CongChange['changes']) {
     try {
-      const recordedMutations: CongregationChange['changes'] = [];
-      const scopesToSave: { scope: CongregationScope; data: object }[] = [];
+      const recordedMutations: CongChange['changes'] = [];
+      const scopesToSave: { scope: CongScope; data: object }[] = [];
 
-      let finalPersons: CongregationPerson[] | undefined;
       let finalSettings = this._settings || {};
+      let finalBranchAnalysis: CongBranchAnalysis[] | undefined;
+      let finalPersons: CongPerson[] | undefined;
 
       let hasGlobalChanges = false;
 
       for (const change of changes) {
+        // --- SETTINGS SCOPE ---
+        if (change.scope === 'settings') {
+          const { merged, hasChanges } = applyDeepSyncPatch(
+            finalSettings,
+            change.patch
+          );
+
+          if (hasChanges) {
+            finalSettings = merged as CongSettings;
+            recordedMutations.push({ scope: 'settings', patch: change.patch });
+            hasGlobalChanges = true;
+          }
+        }
+
+        // --- BRANCH CONG ANALYSIS SCOPE ---
+        if (change.scope === 'branch_cong_analysis') {
+          if (!finalBranchAnalysis)
+            finalBranchAnalysis = await this.getBranchCongAnalysis();
+
+          const patch = change.patch;
+          const reportId = patch.report_date;
+
+          if (!reportId) continue;
+
+          const reportIndex = finalBranchAnalysis.findIndex(
+            (r) => r.report_date === reportId
+          );
+
+          let currentReport: CongBranchAnalysisUpdate;
+
+          if (reportIndex !== -1) {
+            currentReport = finalBranchAnalysis[reportIndex];
+          } else {
+            currentReport = {
+              report_date: reportId,
+            } as CongBranchAnalysisUpdate;
+          }
+
+          const { merged, hasChanges } = applyDeepSyncPatch(
+            currentReport,
+            patch
+          );
+
+          if (hasChanges) {
+            if (reportIndex !== -1) {
+              finalBranchAnalysis[reportIndex] = merged as CongBranchAnalysis;
+            } else {
+              finalBranchAnalysis.push(merged as CongBranchAnalysis);
+            }
+
+            recordedMutations.push({ scope: 'branch_cong_analysis', patch });
+            hasGlobalChanges = true;
+          }
+        }
+
         // --- PERSONS SCOPE ---
         if (change.scope === 'persons') {
           if (!finalPersons) finalPersons = await this.getPersons();
@@ -318,14 +411,14 @@ export class Congregation {
             (p) => p.person_uid === personUid
           );
 
-          let currentPerson: CongregationPersonUpdate;
+          let currentPerson: CongPersonUpdate;
 
           if (personIndex !== -1) {
             currentPerson = finalPersons[personIndex];
           } else {
             currentPerson = {
               person_uid: personUid,
-            } as CongregationPersonUpdate;
+            } as CongPersonUpdate;
           }
 
           const { merged, hasChanges } = applyDeepSyncPatch(
@@ -335,26 +428,12 @@ export class Congregation {
 
           if (hasChanges) {
             if (personIndex !== -1) {
-              finalPersons[personIndex] = merged as CongregationPerson;
+              finalPersons[personIndex] = merged as CongPerson;
             } else {
-              finalPersons.push(merged as CongregationPerson);
+              finalPersons.push(merged as CongPerson);
             }
 
             recordedMutations.push({ scope: 'persons', patch });
-            hasGlobalChanges = true;
-          }
-        }
-
-        // --- SETTINGS SCOPE ---
-        if (change.scope === 'settings') {
-          const { merged, hasChanges } = applyDeepSyncPatch(
-            finalSettings,
-            change.patch
-          );
-
-          if (hasChanges) {
-            finalSettings = merged as CongregationSettings;
-            recordedMutations.push({ scope: 'settings', patch: change.patch });
             hasGlobalChanges = true;
           }
         }
@@ -362,12 +441,20 @@ export class Congregation {
 
       if (hasGlobalChanges) {
         // Aggregate final data for all modified scopes
-        if (finalPersons) {
-          scopesToSave.push({ scope: 'persons', data: finalPersons });
-        }
         if (finalSettings) {
           scopesToSave.push({ scope: 'settings', data: finalSettings });
           this._settings = finalSettings; // Update internal state
+        }
+
+        if (finalBranchAnalysis) {
+          scopesToSave.push({
+            scope: 'branch_cong_analysis',
+            data: finalBranchAnalysis,
+          });
+        }
+
+        if (finalPersons) {
+          scopesToSave.push({ scope: 'persons', data: finalPersons });
         }
 
         // Pass structured payload to orchestrator
@@ -387,13 +474,7 @@ export class Congregation {
     }
   }
 
-  public async applyPersonPatch(patch: CongregationPersonUpdate) {
-    return this.applyBatchedChanges([{ scope: 'persons', patch }]);
-  }
-
-  public async applyServerSettingsPatch(
-    patch: CongregationSettingsServerUpdate
-  ) {
+  public async applyServerSettingsPatch(patch: CongSettingsServerUpdate) {
     const baseSettings = this._settings || {};
 
     const { merged, hasChanges } = this.applyCongregationServerChange(
@@ -403,7 +484,7 @@ export class Congregation {
 
     if (hasChanges) {
       const oldSettings = this._settings;
-      this._settings = merged as CongregationSettings;
+      this._settings = merged as CongSettings;
 
       try {
         await this._saveComponent('settings.json', this._settings);
@@ -416,5 +497,17 @@ export class Congregation {
         throw error;
       }
     }
+  }
+
+  public async applyCongSettingsPatch(patch: CongSettingsUpdate) {
+    return this.applyBatchedChanges([{ scope: 'settings', patch }]);
+  }
+
+  public async applyBranchCongAnalysisPatch(patch: CongBranchAnalysisUpdate) {
+    return this.applyBatchedChanges([{ scope: 'branch_cong_analysis', patch }]);
+  }
+
+  public async applyPersonPatch(patch: CongPersonUpdate) {
+    return this.applyBatchedChanges([{ scope: 'persons', patch }]);
   }
 }
