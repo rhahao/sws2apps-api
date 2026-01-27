@@ -89,7 +89,7 @@ export class User {
     return { merged, hasChanges };
   }
 
-  private async _saveComponent(fileName: string, data: unknown) {
+  private async saveComponent(fileName: string, data: unknown) {
     if (!data) return;
     try {
       const baseKey = `users/${this._id}/`;
@@ -160,7 +160,7 @@ export class User {
 
       for (const entry of scopes) {
         const fileName = `${entry.scope}.json`;
-        uploadPromises.push(this._saveComponent(fileName, entry.data));
+        uploadPromises.push(this.saveComponent(fileName, entry.data));
       }
 
       await Promise.all(uploadPromises);
@@ -270,27 +270,27 @@ export class User {
   }
 
   public async saveProfile() {
-    await this._saveComponent('profile.json', this._profile);
+    await this.saveComponent('profile.json', this._profile);
   }
 
   public async saveSettings() {
-    await this._saveComponent('settings.json', this._settings);
+    await this.saveComponent('settings.json', this._settings);
   }
 
   public async saveSessions() {
-    await this._saveComponent('sessions.json', this._sessions);
+    await this.saveComponent('sessions.json', this._sessions);
   }
 
   public async saveFlags() {
-    await this._saveComponent('flags.json', this._flags);
+    await this.saveComponent('flags.json', this._flags);
   }
 
   public async saveFieldServiceReports(reports: UserFieldServiceReport[]) {
-    await this._saveComponent('field_service_reports.json', reports);
+    await this.saveComponent('field_service_reports.json', reports);
   }
 
   public async saveBibleStudies(bibleStudies: UserBibleStudy[]) {
-    await this._saveComponent('bible_studies.json', bibleStudies);
+    await this.saveComponent('bible_studies.json', bibleStudies);
   }
 
   public async updateFlags(flags: string[]) {
@@ -299,7 +299,7 @@ export class User {
   }
 
   public async saveMutations(changes: UserChange[]) {
-    await this._saveComponent('mutations.json', changes);
+    await this.saveComponent('mutations.json', changes);
   }
 
   public async fetchMutations(): Promise<UserChange[]> {
