@@ -11,6 +11,8 @@ import {
   CongBranchFieldServiceReportUpdate,
   CongFieldServiceReport,
   CongFieldServiceReportUpdate,
+  CongFieldServiceGroupUpdate,
+  CongFieldServiceGroup,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -61,7 +63,8 @@ describe('Congregation Model', () => {
         key.includes('persons.json') ||
         key.includes('branch_cong_analysis.json') ||
         key.includes('branch_field_service_reports.json') ||
-        key.includes('cong_field_service_reports.json')
+        key.includes('cong_field_service_reports.json') ||
+        key.includes('field_service_groups.json')
       ) {
         return JSON.stringify([]);
       }
@@ -298,6 +301,42 @@ describe('Congregation Model', () => {
       expect(congregation.ETag).toBe('v1');
     });
 
+    it('should apply a single field_service_groups patch and save with history', async () => {
+      await congregation.load();
+
+      const patch: CongFieldServiceGroupUpdate = {
+        group_id: 'group-1',
+        updatedAt: '2026-04-28T12:00:00Z',
+        name: 'Group 1',
+      };
+
+      await congregation.applyBatchedChanges([
+        { scope: 'field_service_groups', patch: patch },
+      ]);
+
+      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+
+      const groupsCall = uploadFileCalls.find((call) =>
+        call[0].includes('field_service_groups.json')
+      );
+      const mutationCall = uploadFileCalls.find((call) =>
+        call[0].includes('mutations.json')
+      );
+
+      expect(groupsCall).toBeDefined();
+      expect(mutationCall).toBeDefined();
+
+      const merged = groupsCall![1] as string;
+      const savedReport = JSON.parse(merged) as CongFieldServiceGroup[];
+
+      expect(savedReport).toHaveLength(1);
+      expect(savedReport[0].group_id).toBe(patch.group_id);
+      expect(savedReport[0].updatedAt).toBe(patch.updatedAt);
+      expect(savedReport[0].name).toBe(patch.name);
+
+      expect(congregation.ETag).toBe('v1');
+    });
+
     it('should apply a single persons patch and save with history', async () => {
       await congregation.load();
 
@@ -394,6 +433,22 @@ describe('Congregation Model', () => {
 
       expect(spy).toHaveBeenCalledWith([
         { scope: 'cong_field_service_reports', patch },
+      ]);
+    });
+
+    it('applyCongFieldServiceGroupPatch should route correctly to batched engine', async () => {
+      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+
+      const patch: CongFieldServiceGroupUpdate = {
+        group_id: 'group-2',
+        updatedAt: '2026-05-28T12:00:00Z',
+        name: 'Group 2',
+      };
+
+      await congregation.applyCongFieldServiceGroupPatch(patch);
+
+      expect(spy).toHaveBeenCalledWith([
+        { scope: 'field_service_groups', patch },
       ]);
     });
 

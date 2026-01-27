@@ -1,12 +1,5 @@
 import { DeepPartial } from './common.types.js';
 
-export type CongScope =
-  | 'persons'
-  | 'settings'
-  | 'branch_cong_analysis'
-  | 'branch_field_service_reports'
-  | 'cong_field_service_reports';
-
 export interface CongPerson {
   person_uid: string;
   _deleted: { value: string; updatedAt: string };
@@ -308,6 +301,31 @@ export type CongFieldServiceReportUpdate =
     updatedAt: string;
   };
 
+export interface CongFieldServiceGroup {
+  group_id: string;
+  _deleted: string;
+  updatedAt: string;
+  name: string;
+  sort_index: string;
+  members: string;
+  midweek_meeting: string;
+  weekend_meeting: string;
+  language_group: string;
+}
+
+export type CongFieldServiceGroupUpdate = DeepPartial<CongFieldServiceGroup> & {
+  group_id: string;
+  updatedAt: string;
+};
+
+export type CongScope =
+  | 'persons'
+  | 'settings'
+  | 'branch_cong_analysis'
+  | 'branch_field_service_reports'
+  | 'cong_field_service_reports'
+  | 'field_service_groups';
+
 export type CongChange = {
   ETag: string;
   timestamp: string;
@@ -332,6 +350,10 @@ export type CongChange = {
         scope: 'cong_field_service_reports';
         patch: CongFieldServiceReportUpdate;
       }
+    | {
+        scope: 'field_service_groups';
+        patch: CongFieldServiceGroupUpdate;
+      }
   )[];
 };
 
@@ -341,4 +363,5 @@ export interface CongPatchContext {
   finalPersons?: CongPerson[];
   finalBranchFieldServiceReports?: CongBranchFieldServiceReport[];
   finalCongFieldServiceReports?: CongFieldServiceReport[];
+  finalFieldServiceGroups?: CongFieldServiceGroup[];
 }
