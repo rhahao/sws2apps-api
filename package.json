@@ -4,7 +4,7 @@
   "description": "Node apps to handle backend operations for all sws2apps services",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx firebase.ts && nodemon src/index.ts",
+    "dev": "nodemon src/index.ts",
     "build": "rm -rf dist && tsc && cp -r src/locales dist/locales",
     "start": "node dist/index.js",
     "test": "npm run test:unit && npm run test:e2e",
@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "minio:start": "docker compose up -d && tsx src/scripts/empty-bucket.ts",
+    "minio:start": "tsx firebase.ts && docker compose up -d && tsx src/scripts/empty-bucket.ts",
     "minio:stop": "docker compose down",
     "firebase:start": "firebase emulators:start --only auth --project organized-local"
   },
