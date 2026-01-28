@@ -13,8 +13,8 @@
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "minio:start": "tsx firebase.ts && docker compose up -d && tsx src/scripts/empty-bucket.ts",
-    "minio:stop": "docker compose down",
+    "service:start": "docker compose up -d && tsx src/scripts/empty-bucket.ts",
+    "service:stop": "docker compose down",
     "firebase:start": "firebase emulators:start --only auth --project organized-local"
   },
   "keywords": [],

@@ -11,15 +11,5 @@ services:
     volumes:
       - minio_data:/data
 
-  firebase:
-    build:
-      context: .
-      dockerfile: Dockerfile.firebase
-    container_name: sws2apps-firebase
-    volumes:
-      - .:/app
-    ports:
-      - '${FIREBASE_AUTH_PORT}:${FIREBASE_AUTH_PORT}' # Auth
-
 volumes:
   minio_data:
