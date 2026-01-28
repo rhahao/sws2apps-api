@@ -1,5 +1,4 @@
-import { DeepPartial } from "../common.types.js";
-import { SyncArrayItem, SyncField } from "./common.type.js";
+import { DeepPartial, SyncArrayItem, SyncField } from "../common.types.js";
 
 export interface CongPerson {
   person_uid: string;

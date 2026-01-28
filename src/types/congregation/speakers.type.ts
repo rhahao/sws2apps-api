@@ -1,5 +1,4 @@
-import { DeepPartial } from '../common.types.js';
-import { SyncField } from './common.type.js';
+import { DeepPartial, SyncField } from '../common.types.js';
 
 export interface CongSpeaker {
   id: string;

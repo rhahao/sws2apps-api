@@ -9,6 +9,7 @@ import {
   UserProfileClientUpdate,
   UserProfileServerUpdate,
 } from '../../src/types/index.js';
+import mockData from '../mocks/data.json'
 
 // Mock the config for logger
 vi.mock('../../src/config/index.js', () => ({
@@ -44,50 +45,14 @@ describe('User Model', () => {
 
     // Setup base S3 mocks
     (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-      if (key.endsWith('profile.json')) {
-        return JSON.stringify({
-          firstname: { value: 'Old', updatedAt: '2026-01-01T00:00:00Z' },
-        });
+      const finalKey = key.split("/").at(-1)!
+
+      const data = mockData.users[finalKey];
+
+      if (data) {
+        return JSON.stringify(data);
       }
 
-      if (key.endsWith('settings.json')) {
-        return JSON.stringify({});
-      }
-
-      if (key.endsWith('delegated_field_service_reports.json')) {
-        return JSON.stringify([
-          {
-            report_id: 'delegated-1',
-            person_uid: 'p1',
-            report_date: '2026/01',
-            updatedAt: '2026-01-15T00:00:00Z',
-          },
-        ]);
-      }
-
-      if (key.endsWith('field_service_reports.json')) {
-        return JSON.stringify([
-          {
-            report_date: '2026-01',
-            hours: '10',
-            updatedAt: '2026-01-15T00:00:00Z',
-          },
-        ]);
-      }
-
-      if (key.endsWith('bible_studies.json')) {
-        return JSON.stringify([
-          {
-            person_uid: 'study-1',
-            person_name: 'Old Name',
-            updatedAt: '2026-01-15T00:00:00Z',
-          },
-        ]);
-      }
-
-      if (key.includes('mutations.json')) {
-        return JSON.stringify([]);
-      }
       return null;
     });
 
@@ -233,7 +198,7 @@ describe('User Model', () => {
       await user.load();
 
       const patch: UserFieldServiceReportsUpdate = {
-        report_date: '2026-01', // Identity key
+        report_date: '2026/01', // Identity key
         hours: '15', // The change
         updatedAt: newTimestamp,
       };
@@ -248,7 +213,7 @@ describe('User Model', () => {
 
       const uploadedReports = JSON.parse(reportUploadCall![1]);
       const updatedReport = uploadedReports.find(
-        (r: any) => r.report_date === '2026-01'
+        (r: any) => r.report_date === '2026/01'
       );
 
       // 1. Length check (Identity check)
@@ -373,51 +338,40 @@ describe('User Model', () => {
   });
 
   describe('Convenience Wrappers (Plumbing)', () => {
-    it('applyProfilePatch should route correctly to batched engine', async () => {
+    it('should route all user scopes correctly to the batched engine', async () => {
       const spy = vi.spyOn(user, 'applyBatchedChanges');
-      const patch: UserProfileClientUpdate = {
-        firstname: { value: 'Jane', updatedAt: newTimestamp },
-      };
-      await user.applyProfilePatch(patch);
-      expect(spy).toHaveBeenCalledWith([{ scope: 'profile', patch }]);
-    });
-
-    it('applyFieldServiceReportPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(user, 'applyBatchedChanges');
-      const patch: UserFieldServiceReportsUpdate = {
-        report_date: '2026/03',
-        updatedAt: newTimestamp,
-        hours: '10',
-      };
-      await user.applyFieldServiceReportPatch(patch);
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'field_service_reports', patch },
-      ]);
-    });
-
-    it('applyBibleStudyPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(user, 'applyBatchedChanges');
-      const patch: UserBibleStudiesUpdate = {
-        person_uid: 'study-1',
-        updatedAt: newTimestamp,
-        person_name: 'New Student Name',
-      };
-      await user.applyBibleStudyPatch(patch);
-      expect(spy).toHaveBeenCalledWith([{ scope: 'bible_studies', patch }]);
-    });
-
-    it('applyDelegatedFieldServiceReporPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(user, 'applyBatchedChanges');
-      const patch: DelegatedFieldServiceReportUpdate = {
-        report_id: 'delegated-1',
-        person_uid: 'p1',
-        report_date: '2026/01',
-        updatedAt: newTimestamp,
-      };
-      await user.applyDelegatedFieldServiceReporPatch(patch);
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'delegated_field_service_reports', patch },
-      ]);
+  
+      const testCases = [
+        { 
+          fn: 'applyProfilePatch', 
+          scope: 'profile', 
+          patch: { firstname: { value: 'Jane', updatedAt: newTimestamp } } 
+        },
+        { 
+          fn: 'applyFieldServiceReportPatch', 
+          scope: 'field_service_reports', 
+          patch: { report_date: '2026/03', hours: '10', updatedAt: newTimestamp } 
+        },
+        { 
+          fn: 'applyBibleStudyPatch', 
+          scope: 'bible_studies', 
+          patch: { person_uid: 'study-1', person_name: 'New Student Name', updatedAt: newTimestamp } 
+        },
+        { 
+          fn: 'applyDelegatedFieldServiceReporPatch', 
+          scope: 'delegated_field_service_reports', 
+          patch: { report_id: 'delegated-1', person_uid: 'p1', report_date: '2026/01', updatedAt: newTimestamp } 
+        },
+      ];
+  
+      for (const item of testCases) {
+        // Use type assertion to call the function by string name
+        await (user)[item.fn](item.patch);
+        
+        expect(spy).toHaveBeenCalledWith([
+          { scope: item.scope, patch: item.patch }
+        ]);
+      }
     });
   });
 });

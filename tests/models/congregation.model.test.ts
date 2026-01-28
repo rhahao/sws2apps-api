@@ -1,30 +1,19 @@
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import {
   CongChange,
-  CongPersonUpdate,
   CongSettingsServerUpdate,
-  CongBranchAnalysis,
-  CongBranchAnalysisUpdate,
   CongSettingsUpdate,
-  CongPerson,
-  CongBranchFieldServiceReport,
-  CongBranchFieldServiceReportUpdate,
-  CongFieldServiceReport,
-  CongFieldServiceReportUpdate,
-  CongFieldServiceGroupUpdate,
-  CongFieldServiceGroup,
-  CongMeetingAttendanceUpdate,
-  CongMeetingAttendance,
+  CongScheduleUpdate,
+  CongSchedule,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
+import mockData from '../mocks/data.json';
 
-// Mock the config for logger
 vi.mock('../../src/config/index.js', () => ({
   ENV: { nodeEnv: 'development' },
 }));
 
-// Mock s3Service
 vi.mock('../../src/services/s3.service.js', () => ({
   s3Service: {
     getFile: vi.fn(),
@@ -33,44 +22,28 @@ vi.mock('../../src/services/s3.service.js', () => ({
   },
 }));
 
-// Mock logger
 vi.mock('../../src/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  },
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
 describe('Congregation Model', () => {
   let congregation: Congregation;
   const congId = 'b2b17fbc-88f4-4695-ae63-be3d6f5f499a';
+  const newTimestamp = new Date().toISOString();
 
   beforeEach(() => {
     congregation = new Congregation(congId);
+    vi.clearAllMocks();
 
-    // Setup base S3 mocks
     (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-      if (key.includes('settings.json')) {
-        return JSON.stringify({
-          cong_name: 'New Congregation Name',
-          country_code: 'MDG',
-          cong_prefix: 'ABCDEFGHIJ',
-          country_guid: 'F4A7180D-FCB4-491E-86DF-59FB18C1CB5A',
-        });
+      const finalKey = key.split('/').at(-1)!;
+
+      const data = mockData.congregations[finalKey];
+
+      if (data) {
+        return JSON.stringify(data);
       }
 
-      if (
-        key.includes('mutations.json') ||
-        key.includes('persons.json') ||
-        key.includes('branch_cong_analysis.json') ||
-        key.includes('branch_field_service_reports.json') ||
-        key.includes('cong_field_service_reports.json') ||
-        key.includes('field_service_groups.json') ||
-        key.includes('meeting_attendance.json')
-      ) {
-        return JSON.stringify([]);
-      }
       return null;
     });
 
@@ -80,458 +53,213 @@ describe('Congregation Model', () => {
 
   // --- SERVER ONLY PATCH TESTS ---
   describe('applyServerSettingsPatch', () => {
-    it('should apply a server settings patch without bumping ETag or saving history', async () => {
-      await congregation.load(); // ETag is 'v0' after load
+    it('should apply server patch quietly (no ETag bump)', async () => {
+      await congregation.load();
 
       const serverPatch: CongSettingsServerUpdate = {
-        cong_name: 'Updated Congregation Name',
+        cong_name: 'New congregation name',
       };
 
       await congregation.applyServerSettingsPatch(serverPatch);
 
+      const calls = (s3Service.uploadFile as Mock).mock.calls;
+      expect(calls).toHaveLength(1); // Only settings.json
+      expect(calls[0][0]).toContain('settings.json');
       expect(congregation.settings.cong_name).toBe(serverPatch.cong_name);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      expect(uploadFileCalls).toHaveLength(1); // settings only, no mutations, no ETag
-
-      const settingsCall = uploadFileCalls.find((call) =>
-        call[0].includes('settings.json')
-      );
-
-      expect(settingsCall).toBeDefined();
-
-      expect(congregation.ETag).toBe('v0'); // ETag should remain unchanged
+      expect(congregation.ETag).toBe('v0');
     });
   });
 
   // --- CORE ENGINE TESTS ---
   describe('applyBatchedChanges (Engine)', () => {
-    // Clear mock calls to s3Service.uploadFile before starting the batched changes
-    beforeEach(() => {
-      (s3Service.uploadFile as Mock).mockClear();
-    });
-
-    it('should process multiple scopes in one S3 transaction', async () => {
+    it('should process multiple scopes, merge data correctly, and commit ETag LAST', async () => {
       await congregation.load();
 
       const batch: CongChange['changes'] = [
         {
           scope: 'settings',
-          patch: {
-            data_sync: { value: true, updatedAt: '2026-01-26T00:00:00Z' },
-          },
+          patch: { data_sync: { value: true, updatedAt: newTimestamp } },
         },
         {
           scope: 'persons',
           patch: {
-            person_uid: 'person-1',
-            person_firstname: {
-              value: 'Jane',
-              updatedAt: '2026-01-26T12:00:00Z',
-            },
+            person_uid: 'p-new',
+            person_firstname: { value: 'Jane', updatedAt: newTimestamp },
           },
         },
       ];
 
       await congregation.applyBatchedChanges(batch);
 
-      // Verify state updates
-      expect(congregation.settings).toHaveProperty('data_sync');
+      const calls = (s3Service.uploadFile as Mock).mock.calls;
 
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
+      // 1. Verify Data Integrity (The Merge)
+      const settingsCall = calls.find((c) => c[0].endsWith('settings.json'));
+      const settingsData = JSON.parse(settingsCall![1]);
+      expect(settingsData.cong_name).toBe(
+        mockData.congregations['settings.json'].cong_name
+      ); // Preserved
+      expect(settingsData.data_sync.value).toBe(
+        batch[0].patch['data_sync']['value']
+      ); // Updated
 
-      // Verify SaveWithHistory orchestration
-      // 1. Mutations, 2. ETag, 3. Settings, 4. Persons
-      expect(uploadFileCalls).toHaveLength(4);
+      const personsCall = calls.find((c) => c[0].endsWith('persons.json'));
+      const personsData = JSON.parse(personsCall![1]);
+      expect(personsData).toHaveLength(2); // Merged, not duplicated
+      expect(personsData[0].person_uid).toBe('person-1'); // Preserved
+      expect(personsData[1].person_uid).toBe('p-new'); // Appended
 
-      const settingsCall = uploadFileCalls.find((call) =>
-        call[0].includes('settings.json')
-      );
+      // 2. Verify Mutation History
+      const mutationCall = calls.find((c) => c[0].endsWith('mutations.json'));
+      const mutationData = JSON.parse(mutationCall![1]);
+      expect(mutationData[0].changes).toEqual(batch); // History recorded
 
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
+      // 3. Verify Atomic Order (The "Commit")
+      const lastCallPath = calls[calls.length - 1][0];
+      expect(lastCallPath).toBe(`congregations/${congId}/`);
 
-      const personsCall = uploadFileCalls.find((call) =>
-        call[0].includes('persons.json')
-      );
-
-      expect(mutationCall).toBeDefined();
-      expect(settingsCall).toBeDefined();
-      expect(personsCall).toBeDefined();
-
+      // 4. Verify Version Bump
       expect(congregation.ETag).toBe('v1');
     });
 
-    it('should apply a single settings patch and save with history', async () => {
+    it('should use weekOf as identity and deep merge nested midweek data', async () => {
       await congregation.load();
 
-      const patch: CongSettingsUpdate = {
-        time_away_public: { value: true, updatedAt: '2026-01-26T12:00:00Z' },
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'settings', patch: patch },
-      ]);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const settingsCall = uploadFileCalls.find((call) =>
-        call[0].includes('settings.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(settingsCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      expect(congregation.settings).toHaveProperty('time_away_public');
-      expect(congregation.settings.time_away_public!.value).toBe(true);
-      expect(congregation.settings.time_away_public!.updatedAt).toBe(
-        '2026-01-26T12:00:00Z'
-      );
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should apply a single branch_cong_analysis patch and save with history', async () => {
-      await congregation.load();
-
-      const patch: CongBranchAnalysisUpdate = {
-        report_date: '2026-01-01',
-        updatedAt: '2026-01-26T12:00:00Z',
-        meeting_average: '100',
-        publishers: '50',
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'branch_cong_analysis', patch: patch },
-      ]);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const analysisCall = uploadFileCalls.find((call) =>
-        call[0].includes('branch_cong_analysis.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(analysisCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      const merged = analysisCall![1] as string;
-      const savedAnalysis = JSON.parse(merged) as CongBranchAnalysis[];
-
-      expect(savedAnalysis).toHaveLength(1);
-      expect(savedAnalysis[0].report_date).toBe('2026-01-01');
-      expect(savedAnalysis[0].meeting_average).toBe('100');
-      expect(savedAnalysis[0].publishers).toBe('50');
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should apply a single branch_field_service_reports patch and save with history', async () => {
-      await congregation.load();
-
-      const patch: CongBranchFieldServiceReportUpdate = {
-        report_date: '2026-02-01',
-        updatedAt: '2026-02-28T12:00:00Z',
-        publishers_active: '120',
-        weekend_meeting_average: '150',
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'branch_field_service_reports', patch: patch },
-      ]);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const reportCall = uploadFileCalls.find((call) =>
-        call[0].includes('branch_field_service_reports.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(reportCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      const merged = reportCall![1] as string;
-      const savedReport = JSON.parse(merged) as CongBranchFieldServiceReport[];
-
-      expect(savedReport).toHaveLength(1);
-      expect(savedReport[0].report_date).toBe('2026-02-01');
-      expect(savedReport[0].publishers_active).toBe('120');
-      expect(savedReport[0].weekend_meeting_average).toBe('150');
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should apply a single cong_field_service_reports patch and save with history', async () => {
-      await congregation.load();
-
-      const patch: CongFieldServiceReportUpdate = {
-        report_id: 'report-1',
-        report_date: '2026-04-01',
-        updatedAt: '2026-04-28T12:00:00Z',
-        hours: '10',
-        bible_studies: '5',
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'cong_field_service_reports', patch: patch },
-      ]);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const reportCall = uploadFileCalls.find((call) =>
-        call[0].includes('cong_field_service_reports.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(reportCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      const merged = reportCall![1] as string;
-      const savedReport = JSON.parse(merged) as CongFieldServiceReport[];
-
-      expect(savedReport).toHaveLength(1);
-      expect(savedReport[0].report_id).toBe('report-1');
-      expect(savedReport[0].hours).toBe('10');
-      expect(savedReport[0].bible_studies).toBe('5');
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should apply a single field_service_groups patch and save with history', async () => {
-      await congregation.load();
-
-      const patch: CongFieldServiceGroupUpdate = {
-        group_id: 'group-1',
-        updatedAt: '2026-04-28T12:00:00Z',
-        name: 'Group 1',
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'field_service_groups', patch: patch },
-      ]);
-
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const groupsCall = uploadFileCalls.find((call) =>
-        call[0].includes('field_service_groups.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(groupsCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      const merged = groupsCall![1] as string;
-      const savedReport = JSON.parse(merged) as CongFieldServiceGroup[];
-
-      expect(savedReport).toHaveLength(1);
-      expect(savedReport[0].group_id).toBe(patch.group_id);
-      expect(savedReport[0].updatedAt).toBe(patch.updatedAt);
-      expect(savedReport[0].name).toBe(patch.name);
-
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should apply a single meeting_attendance patch and save with history', async () => {
-      await congregation.load();
-
-      const patch: CongMeetingAttendanceUpdate = {
-        month_date: '2026/01',
-        week_1: {
-          midweek: [
-            { type: 'main', updatedAt: '2026-01-26T12:00:00Z', present: '30' },
-          ],
+      const patch: CongScheduleUpdate = {
+        weekOf: '2026/01/05',
+        midweek_meeting: {
+          chairman: {
+            main_hall: [
+              { type: 'main', value: 'New Chairman', updatedAt: newTimestamp },
+            ],
+          },
         },
       };
 
-      await congregation.applyBatchedChanges([
-        { scope: 'meeting_attendance', patch: patch },
-      ]);
+      await congregation.applyBatchedChanges([{ scope: 'schedules', patch }]);
 
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const attendanceCall = uploadFileCalls.find((call) =>
-        call[0].includes('meeting_attendance.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
+      const uploadCall = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
+        c[0].includes('schedules.json')
       );
 
-      expect(attendanceCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
+      const data = JSON.parse(uploadCall![1]);
 
-      const merged = attendanceCall![1] as string;
-      const savedData = JSON.parse(merged) as CongMeetingAttendance[];
-
-      expect(savedData).toHaveLength(1);
-      expect(savedData[0].month_date).toBe(patch.month_date);
-      expect(savedData[0].week_1.midweek[0].type).toBe(
-        patch.week_1!.midweek![0].type
+      // Verify deduplication
+      expect(data.length).toBe(1);
+      // Verify deep path update
+      expect(data[0].midweek_meeting.chairman.main_hall[0].value).toBe(
+        'New Chairman'
       );
-      expect(savedData[0].week_1.midweek[0].present).toBe(
-        patch.week_1!.midweek![0].present
-      );
-      expect(savedData[0].week_1.midweek[0].updatedAt).toBe(
-        patch.week_1!.midweek![0].updatedAt
-      );
-
-      expect(congregation.ETag).toBe('v1');
     });
 
-    it('should apply a single persons patch and save with history', async () => {
+    it('should fail transaction and rollback state if upload fails (Commit Last)', async () => {
       await congregation.load();
 
-      const patch: CongPersonUpdate = {
-        person_uid: 'person-1',
-        person_firstname: { value: 'John', updatedAt: '2026-01-26T12:00:00Z' },
-        person_lastname: { value: 'Doe', updatedAt: '2026-01-26T12:00:00Z' },
+      (s3Service.uploadFile as Mock).mockRejectedValueOnce(
+        new Error('S3 Down')
+      );
+
+      await expect(
+        congregation.applyCongSettingsPatch({
+          data_sync: { value: true, updatedAt: newTimestamp },
+        })
+      ).rejects.toThrow('S3 Down');
+
+      const calls = (s3Service.uploadFile as Mock).mock.calls;
+
+      expect(
+        calls.find((c) => c[0] === `congregations/${congId}/`)
+      ).toBeUndefined();
+
+      expect(congregation.ETag).toBe('v0'); // No version bump
+    });
+
+    it('should ignore stale updates based on updatedAt [2026-01-25]', async () => {
+      await congregation.load();
+
+      const stalePatch: CongSettingsUpdate = {
+        data_sync: { value: true, updatedAt: '2020-01-01T00:00:00Z' },
       };
 
       await congregation.applyBatchedChanges([
-        { scope: 'persons', patch: patch },
+        { scope: 'settings', patch: stalePatch },
       ]);
 
-      const uploadFileCalls = (s3Service.uploadFile as Mock).mock.calls;
-
-      const personsCall = uploadFileCalls.find((call) =>
-        call[0].includes('persons.json')
-      );
-      const mutationCall = uploadFileCalls.find((call) =>
-        call[0].includes('mutations.json')
-      );
-
-      expect(personsCall).toBeDefined();
-      expect(mutationCall).toBeDefined();
-
-      const merged = personsCall![1] as string;
-      const savedPersons = JSON.parse(merged) as CongPerson[];
-
-      expect(savedPersons).toHaveLength(1);
-      expect(savedPersons[0].person_uid).toBe('person-1');
-      expect(savedPersons[0].person_firstname.value).toBe('John');
-      expect(savedPersons[0].person_lastname.value).toBe('Doe');
-      expect(congregation.ETag).toBe('v1');
+      expect(s3Service.uploadFile).not.toHaveBeenCalled();
+      expect(congregation.ETag).toBe('v0');
     });
   });
 
   // --- CONVENIENCE WRAPPER TESTS ---
   describe('Convenience Wrappers (Plumbing)', () => {
-    it('applyCongSettingsPatch should route correctly to batched engine', async () => {
+    it('should route all scopes correctly to the engine', async () => {
       const spy = vi.spyOn(congregation, 'applyBatchedChanges');
 
-      const patch: CongSettingsUpdate = {
-        time_away_public: { value: true, updatedAt: '2026-01-26T12:00:00Z' },
-      };
-
-      await congregation.applyCongSettingsPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([{ scope: 'settings', patch }]);
-    });
-
-    it('applyBranchCongAnalysisPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongBranchAnalysisUpdate = {
-        report_date: '2026-01-01',
-        updatedAt: '2026-01-26T12:00:00Z',
-        meeting_average: '100',
-      };
-
-      await congregation.applyBranchCongAnalysisPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'branch_cong_analysis', patch },
-      ]);
-    });
-
-    it('applyBranchFieldServiceReportPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongBranchFieldServiceReportUpdate = {
-        report_date: '2026-03-01',
-        updatedAt: '2026-03-28T12:00:00Z',
-        publishers_active: '130',
-      };
-
-      await congregation.applyBranchFieldServiceReportPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'branch_field_service_reports', patch },
-      ]);
-    });
-
-    it('applyCongFieldServiceReportPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongFieldServiceReportUpdate = {
-        report_id: 'report-2',
-        report_date: '2026-05-01',
-        updatedAt: '2026-05-28T12:00:00Z',
-        hours: '15',
-      };
-
-      await congregation.applyCongFieldServiceReportPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'cong_field_service_reports', patch },
-      ]);
-    });
-
-    it('applyCongFieldServiceGroupPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongFieldServiceGroupUpdate = {
-        group_id: 'group-2',
-        updatedAt: '2026-05-28T12:00:00Z',
-        name: 'Group 2',
-      };
-
-      await congregation.applyCongFieldServiceGroupPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'field_service_groups', patch },
-      ]);
-    });
-
-    it('applyCongMeetingAttendancePatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongMeetingAttendanceUpdate = {
-        month_date: '2026/02',
-        week_2: {
-          weekend: [
-            { type: 'main', updatedAt: '2026-01-26T12:00:00Z', present: '20' },
-          ],
+      const wrappers = [
+        {
+          fn: 'applyCongSettingsPatch',
+          scope: 'settings',
+          patch: { data_sync: { value: true, updatedAt: newTimestamp } },
         },
-      };
+        {
+          fn: 'applyBranchCongAnalysisPatch',
+          scope: 'branch_cong_analysis',
+          patch: { report_date: '2026-01', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyPersonPatch',
+          scope: 'persons',
+          patch: { person_uid: 'p1', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyBranchFieldServiceReportPatch',
+          scope: 'branch_field_service_reports',
+          patch: { report_date: '2026-01', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongFieldServiceReportPatch',
+          scope: 'cong_field_service_reports',
+          patch: { report_id: 'r1', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongFieldServiceGroupPatch',
+          scope: 'field_service_groups',
+          patch: { group_id: 'g1', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongMeetingAttendancePatch',
+          scope: 'meeting_attendance',
+          patch: { month_date: '2026/01', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongSchedulePatch',
+          scope: 'schedules',
+          patch: { weekOf: '2026-01-05', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongSourcePatch',
+          scope: 'sources',
+          patch: { weekOf: '2026-01-05', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongSpeakerPatch',
+          scope: 'speakers_congregations',
+          patch: { id: 's1', updatedAt: newTimestamp },
+        },
+        {
+          fn: 'applyCongUpcomingEventPatch',
+          scope: 'upcoming_events',
+          patch: { event_uid: 'e1', updatedAt: newTimestamp },
+        },
+      ];
 
-      await congregation.applyCongMeetingAttendancePatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([
-        { scope: 'meeting_attendance', patch },
-      ]);
-    });
-
-    it('applyPersonPatch should route correctly to batched engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
-
-      const patch: CongPersonUpdate = {
-        person_uid: 'person-1',
-        person_firstname: { value: 'John', updatedAt: '2026-01-26T12:00:00Z' },
-        person_lastname: { value: 'Doe', updatedAt: '2026-01-26T12:00:00Z' },
-      };
-
-      await congregation.applyPersonPatch(patch);
-
-      expect(spy).toHaveBeenCalledWith([{ scope: 'persons', patch }]);
+      for (const item of wrappers) {
+        await (congregation)[item.fn](item.patch);
+        
+        expect(spy).toHaveBeenCalledWith([
+          { scope: item.scope, patch: item.patch },
+        ]);
+      }
     });
   });
 });

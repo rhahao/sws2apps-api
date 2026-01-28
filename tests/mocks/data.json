@@ -1,0 +1,63 @@
+{
+  "users": {
+    "bible_studies.json": [
+      {
+        "person_uid": "study-1",
+        "person_name": "Old Name",
+        "updatedAt": "2026-01-15T00:00:00Z"
+      }
+    ],
+    "delegated_field_service_reports.json": [
+      {
+        "report_id": "delegated-1",
+        "person_uid": "p1",
+        "report_date": "2026/01",
+        "updatedAt": "2026-01-15T00:00:00Z"
+      }
+    ],
+    "field_service_reports.json": [
+      {
+        "report_date": "2026/01",
+        "hours": "10",
+        "updatedAt": "2026-01-15T00:00:00Z"
+      }
+    ],
+    "mutations.json": [],
+    "profile.json": {
+      "firstname": { "value": "Old", "updatedAt": "2026-01-01T00:00:00Z" }
+    },
+    "settings.json": {}
+  },
+  "congregations": {
+    "mutations.json": [],
+    "persons.json": [
+      {
+        "person_uid": "person-1",
+        "person_firstname": {
+          "value": "John",
+          "updatedAt": "2026-01-15T00:00:00Z"
+        }
+      }
+    ],
+    "schedules.json": [
+      {
+        "weekOf": "2026/01/05",
+        "midweek_meeting": {
+          "chairman": {
+            "main_hall": [
+              {
+                "type": "main",
+                "value": "chairman",
+                "updatedAt": "2026-01-01T00:00:00Z"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "settings.json": {
+      "cong_name": "Congregation Name",
+      "data_sync": { "value": false, "updatedAt": "2026-01-15T00:00:00Z" }
+    }
+  }
+}

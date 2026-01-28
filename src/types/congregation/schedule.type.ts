@@ -1,5 +1,4 @@
-import { DeepPartial } from '../common.types.js';
-import { SyncField } from './common.type.js';
+import { DeepPartial, SyncField } from '../common.types.js';
 
 export interface AssignmentCongregation {
   type: string;
@@ -78,7 +77,7 @@ export interface CongSchedule {
     };
     closing_prayer: AssignmentCongregation[];
     circuit_overseer: AssignmentCongregation;
-    aux_fsg?: SyncField;
+    aux_fsg: SyncField;
     week_type: WeekTypeCongregation[];
   };
   weekend_meeting: {
