@@ -18,6 +18,10 @@ import {
   CongFieldServiceGroup,
   CongMeetingAttendance,
   CongMeetingAttendanceUpdate,
+  CongScheduleUpdate,
+  CongSourceUpdate,
+  CongSchedule,
+  CongSource,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -129,7 +133,9 @@ export class Congregation {
     }
   }
 
-  private async getCongFieldServiceReports(): Promise<CongFieldServiceReport[]> {
+  private async getCongFieldServiceReports(): Promise<
+    CongFieldServiceReport[]
+  > {
     try {
       const content = await s3Service.getFile(
         `congregations/${this._id}/cong_field_service_reports.json`
@@ -190,6 +196,38 @@ export class Congregation {
     }
   }
 
+  private async getCongSchedules(): Promise<CongSchedule[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/schedules.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} schedules:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getCongSources(): Promise<CongSource[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/sources.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} sources:`,
+        error
+      );
+      return [];
+    }
+  }
+
   private applyCongregationServerChange(
     current: CongSettings,
     patch: CongSettingsServerUpdate
@@ -203,7 +241,6 @@ export class Congregation {
       const k = key as keyof CongSettingsServer;
 
       if (newVal !== undefined && merged[k] !== newVal) {
-        // We still need a narrow cast for assignment, but we avoid 'any'
         Object.assign(merged, { [k]: newVal });
         hasChanges = true;
       }
@@ -307,9 +344,11 @@ export class Congregation {
       context.finalSettings,
       patch
     );
+
     if (hasChanges) {
       context.finalSettings = merged as CongSettings;
     }
+
     return { hasChanges, data: context.finalSettings };
   }
 
@@ -337,9 +376,9 @@ export class Congregation {
 
     if (hasChanges) {
       if (personIndex !== -1) {
-        persons[personIndex] = merged as CongPerson;
+        persons[personIndex] = merged;
       } else {
-        persons.push(merged as CongPerson);
+        persons.push(merged);
       }
     }
     return { hasChanges, data: persons };
@@ -369,9 +408,9 @@ export class Congregation {
 
     if (hasChanges) {
       if (reportIndex !== -1) {
-        analysis[reportIndex] = merged as CongBranchAnalysis;
+        analysis[reportIndex] = merged;
       } else {
-        analysis.push(merged as CongBranchAnalysis);
+        analysis.push(merged);
       }
     }
     return { hasChanges, data: analysis };
@@ -385,6 +424,7 @@ export class Congregation {
       context.finalBranchFieldServiceReports =
         await this.getBranchFieldServiceReports();
     }
+
     const reports = context.finalBranchFieldServiceReports;
     const reportId = patch.report_date;
 
@@ -400,9 +440,9 @@ export class Congregation {
 
     if (hasChanges) {
       if (reportIndex !== -1) {
-        reports[reportIndex] = merged as CongBranchFieldServiceReport;
+        reports[reportIndex] = merged;
       } else {
-        reports.push(merged as CongBranchFieldServiceReport);
+        reports.push(merged);
       }
     }
     return { hasChanges, data: reports };
@@ -431,9 +471,9 @@ export class Congregation {
 
     if (hasChanges) {
       if (reportIndex !== -1) {
-        reports[reportIndex] = merged as CongFieldServiceReport;
+        reports[reportIndex] = merged;
       } else {
-        reports.push(merged as CongFieldServiceReport);
+        reports.push(merged);
       }
     }
     return { hasChanges, data: reports };
@@ -463,11 +503,12 @@ export class Congregation {
 
     if (hasChanges) {
       if (groupIndex !== -1) {
-        groups[groupIndex] = merged as CongFieldServiceGroup;
+        groups[groupIndex] = merged;
       } else {
-        groups.push(merged as CongFieldServiceGroup);
+        groups.push(merged);
       }
     }
+
     return { hasChanges, data: groups };
   }
 
@@ -495,12 +536,79 @@ export class Congregation {
 
     if (hasChanges) {
       if (monthIndex !== -1) {
-        attendance[monthIndex] = merged as CongMeetingAttendance;
+        attendance[monthIndex] = merged;
       } else {
-        attendance.push(merged as CongMeetingAttendance);
+        attendance.push(merged);
       }
     }
+    
     return { hasChanges, data: attendance };
+  }
+
+  private async handleCongSchedulePatch(
+    patch: CongScheduleUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalSchedules) {
+      context.finalSchedules = await this.getCongSchedules();
+    }
+
+    const schedules = context.finalSchedules;
+    const weekId = patch.weekOf
+
+    if (!weekId) return { hasChanges: false, data: schedules };
+
+    const weekIndex = schedules.findIndex((r) => r.weekOf === weekId);
+
+    const currentSchedule =
+      weekIndex !== -1
+        ? schedules[weekIndex]
+        : ({ weekOf: weekId } as CongSchedule);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentSchedule, patch);
+
+    if (hasChanges) {
+      if (weekIndex !== -1) {
+        schedules[weekIndex] = merged;
+      } else {
+        schedules.push(merged);
+      }
+    }
+
+    return { hasChanges, data: schedules };
+  }
+
+  private async handleCongSourcePatch(
+    patch: CongSourceUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalSources) {
+      context.finalSources = await this.getCongSources()
+    }
+
+    const sources = context.finalSources;
+    const weekId = patch.weekOf
+
+    if (!weekId) return { hasChanges: false, data: sources };
+
+    const weekIndex = sources.findIndex((r) => r.weekOf === weekId);
+
+    const currentSource =
+      weekIndex !== -1
+        ? sources[weekIndex]
+        : ({ weekOf: weekId } as CongSource);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentSource, patch);
+
+    if (hasChanges) {
+      if (weekIndex !== -1) {
+        sources[weekIndex] = merged;
+      } else {
+        sources.push(merged);
+      }
+    }
+    
+    return { hasChanges, data: sources };
   }
 
   // --- Public Method ---
@@ -610,7 +718,9 @@ export class Congregation {
         | CongBranchFieldServiceReport[]
         | CongFieldServiceReport[]
         | CongFieldServiceGroup[]
-        | CongMeetingAttendance[];
+        | CongMeetingAttendance[]
+        | CongSchedule[]
+        | CongSource[];
 
       const recordedMutations: CongChange['changes'] = [];
 
@@ -624,6 +734,8 @@ export class Congregation {
         finalCongFieldServiceReports: undefined,
         finalFieldServiceGroups: undefined,
         finalMeetingAttendance: undefined,
+        finalSchedules: undefined,
+        finalSources: undefined
       };
 
       for (const change of changes) {
@@ -673,6 +785,20 @@ export class Congregation {
             );
             break;
           }
+          case 'schedules': {
+            result = await this.handleCongSchedulePatch(
+              change.patch,
+              context
+            );
+            break;
+          }
+          case 'sources': {
+            result = await this.handleCongSourcePatch(
+              change.patch,
+              context
+            );
+            break;
+          }
         }
 
         if (result && result.hasChanges) {
@@ -682,8 +808,6 @@ export class Congregation {
       }
 
       if (recordedMutations.length > 0) {
-        this._settings = context.finalSettings; // Update internal state
-
         const finalScopes = Array.from(scopesToSave.entries()).map(
           ([scope, data]) => ({ scope, data })
         );
@@ -742,5 +866,13 @@ export class Congregation {
     patch: CongMeetingAttendanceUpdate
   ) {
     return this.applyBatchedChanges([{ scope: 'meeting_attendance', patch }]);
+  }
+
+  public async applyCongSchedulePatch(patch: CongScheduleUpdate) {
+    return this.applyBatchedChanges([{ scope: 'schedules', patch }]);
+  }
+
+  public async applyCongSourcePatch(patch: CongSourceUpdate) {
+    return this.applyBatchedChanges([{ scope: 'sources', patch }]);
   }
 }
