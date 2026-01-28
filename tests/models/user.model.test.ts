@@ -8,8 +8,9 @@ import {
   UserFieldServiceReportsUpdate,
   UserProfileClientUpdate,
   UserProfileServerUpdate,
+  UserSettingsUpdate,
 } from '../../src/types/index.js';
-import mockData from '../mocks/data.json'
+import mockData from '../mocks/data.json';
 
 // Mock the config for logger
 vi.mock('../../src/config/index.js', () => ({
@@ -45,7 +46,7 @@ describe('User Model', () => {
 
     // Setup base S3 mocks
     (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-      const finalKey = key.split("/").at(-1)!
+      const finalKey = key.split('/').at(-1)!;
 
       const data = mockData.users[finalKey];
 
@@ -88,6 +89,75 @@ describe('User Model', () => {
     });
   });
 
+  describe('cleanupMutations', () => {
+    it('should return an empty array if no changes are provided', () => {
+      const { pruned, hasChanged } = user.cleanupMutations([]);
+      expect(pruned).toEqual([]);
+      expect(hasChanged).toBe(false);
+    });
+
+    it('should keep all changes if they are recent', () => {
+      const recentChanges = [
+        { ETag: 'v1', timestamp: new Date().toISOString(), changes: [] },
+      ];
+      const { pruned, hasChanged } = user.cleanupMutations(recentChanges);
+      expect(pruned).toEqual(recentChanges);
+      expect(hasChanged).toBe(false);
+    });
+
+    it('should prune old changes based on a provided cutoff date', () => {
+      const specificCutoff = new Date('2023-06-01T00:00:00Z');
+
+      const changes: UserChange[] = [
+        { ETag: 'v2', timestamp: '2023-07-01T00:00:00Z', changes: [] }, // keep
+        { ETag: 'v1', timestamp: '2023-05-31T23:59:59Z', changes: [] }, // prune
+      ];
+
+      const { pruned, hasChanged } = user.cleanupMutations(
+        changes,
+        specificCutoff
+      );
+      expect(pruned).toHaveLength(1);
+      expect(pruned[0].ETag).toBe('v2');
+      expect(hasChanged).toBe(true);
+    });
+  });
+
+  describe('cleanupSessions', () => {
+    it('should return false for undefined or empty sessions', async () => {
+      await user.load();
+      (user as any)._sessions = undefined; // Force undefined
+      expect(user.cleanupSessions()).toBe(false);
+
+      (user as any)._sessions = []; // Force empty
+      expect(user.cleanupSessions()).toBe(false);
+    });
+
+    it('should keep recent sessions and return false', async () => {
+      await user.load(); // loads sessions from mock
+      expect(user.cleanupSessions()).toBe(false);
+    });
+
+    it('should prune old sessions and return true', async () => {
+      await user.load();
+      const oldDate = new Date();
+      oldDate.setMonth(oldDate.getMonth() - 8);
+
+      // Overwrite with one old session
+      (user as any)._sessions = [
+        {
+          last_seen: oldDate.toISOString(),
+          device_lang: 'en',
+          app_version: '1.0',
+          os_name: 'TestOS',
+        },
+      ];
+
+      expect(user.cleanupSessions()).toBe(true);
+      expect(user.sessions?.length).toBe(0);
+    });
+  });
+
   describe('applyBatchedChanges (Engine)', () => {
     it('should process multiple scopes and trigger all required S3 uploads', async () => {
       await user.load();
@@ -127,23 +197,24 @@ describe('User Model', () => {
 
     it('should not update ETag if a data file upload fails (Commit Last)', async () => {
       await user.load();
-    
+
       // 1. We mock the FIRST file upload to fail (e.g., profile.json)
-      (s3Service.uploadFile as Mock)
-        .mockRejectedValueOnce(new Error('S3 Connection Lost'));
-    
+      (s3Service.uploadFile as Mock).mockRejectedValueOnce(
+        new Error('S3 Connection Lost')
+      );
+
       const patch: UserProfileClientUpdate = {
         firstname: { value: 'Patched', updatedAt: newTimestamp },
       };
-    
+
       await expect(
         user.applyBatchedChanges([{ scope: 'profile', patch }])
       ).rejects.toThrow('S3 Connection Lost');
-    
+
       // 2. PROOF: The ETag upload was never even called because the engine short-circuited
       const { calls } = (s3Service.uploadFile as Mock).mock;
-      const etagCall = calls.find(c => c[0] === `users/${userId}/`);
-      
+      const etagCall = calls.find((c) => c[0] === `users/${userId}/`);
+
       expect(etagCall).toBeUndefined(); // This is the gold standard for safety
       expect(user.ETag).toBe('v0');
     });
@@ -311,7 +382,7 @@ describe('User Model', () => {
 
     it('should update an existing delegated_field_service_report without duplicating', async () => {
       await user.load();
-    
+
       const patch: DelegatedFieldServiceReportUpdate = {
         report_id: 'delegated-1',
         person_uid: 'p1',
@@ -319,18 +390,20 @@ describe('User Model', () => {
         updatedAt: newTimestamp,
         hours: '12',
       };
-    
+
       await user.applyBatchedChanges([
         { scope: 'delegated_field_service_reports', patch },
       ]);
-    
+
       const { calls } = (s3Service.uploadFile as Mock).mock;
-      const dataCall = calls.find((c) => c[0].endsWith('delegated_field_service_reports.json'));
+      const dataCall = calls.find((c) =>
+        c[0].endsWith('delegated_field_service_reports.json')
+      );
       const data = JSON.parse(dataCall![1]);
-    
+
       // Ensure length is still 1 (Updated, not Appended)
       expect(data.length).toBe(1);
-      
+
       const report = data.find((r: any) => r.report_id === 'delegated-1');
       expect(report.hours).toBe('12');
       expect(report.updatedAt).toBe(newTimestamp);
@@ -340,36 +413,54 @@ describe('User Model', () => {
   describe('Convenience Wrappers (Plumbing)', () => {
     it('should route all user scopes correctly to the batched engine', async () => {
       const spy = vi.spyOn(user, 'applyBatchedChanges');
-  
+
       const testCases = [
-        { 
-          fn: 'applyProfilePatch', 
-          scope: 'profile', 
-          patch: { firstname: { value: 'Jane', updatedAt: newTimestamp } } 
+        {
+          fn: 'applyProfilePatch',
+          scope: 'profile',
+          patch: { firstname: { value: 'Jane', updatedAt: newTimestamp } },
         },
-        { 
-          fn: 'applyFieldServiceReportPatch', 
-          scope: 'field_service_reports', 
-          patch: { report_date: '2026/03', hours: '10', updatedAt: newTimestamp } 
+        {
+          fn: 'applySettingsPatch',
+          scope: 'settings',
+          patch: { data_view: { value: 'main', updatedAt: newTimestamp } },
         },
-        { 
-          fn: 'applyBibleStudyPatch', 
-          scope: 'bible_studies', 
-          patch: { person_uid: 'study-1', person_name: 'New Student Name', updatedAt: newTimestamp } 
+        {
+          fn: 'applyFieldServiceReportPatch',
+          scope: 'field_service_reports',
+          patch: {
+            report_date: '2026/03',
+            hours: '10',
+            updatedAt: newTimestamp,
+          },
         },
-        { 
-          fn: 'applyDelegatedFieldServiceReporPatch', 
-          scope: 'delegated_field_service_reports', 
-          patch: { report_id: 'delegated-1', person_uid: 'p1', report_date: '2026/01', updatedAt: newTimestamp } 
+        {
+          fn: 'applyBibleStudyPatch',
+          scope: 'bible_studies',
+          patch: {
+            person_uid: 'study-1',
+            person_name: 'New Student Name',
+            updatedAt: newTimestamp,
+          },
+        },
+        {
+          fn: 'applyDelegatedFieldServiceReporPatch',
+          scope: 'delegated_field_service_reports',
+          patch: {
+            report_id: 'delegated-1',
+            person_uid: 'p1',
+            report_date: '2026/01',
+            updatedAt: newTimestamp,
+          },
         },
       ];
-  
+
       for (const item of testCases) {
         // Use type assertion to call the function by string name
         await (user)[item.fn](item.patch);
-        
+
         expect(spy).toHaveBeenCalledWith([
-          { scope: item.scope, patch: item.patch }
+          { scope: item.scope, patch: item.patch },
         ]);
       }
     });

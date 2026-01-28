@@ -70,6 +70,52 @@ describe('Congregation Model', () => {
     });
   });
 
+  describe('cleanupMutations', () => {
+    it('should return an empty array if no changes are provided', () => {
+      const { pruned, hasChanged } = congregation.cleanupMutations([]);
+      expect(pruned).toEqual([]);
+      expect(hasChanged).toBe(false);
+    });
+  
+    it('should keep all changes if they are recent', () => {
+      const recentChanges = [
+        { ETag: 'v1', timestamp: new Date().toISOString(), changes: [] },
+      ];
+      const { pruned, hasChanged } = congregation.cleanupMutations(recentChanges);
+      expect(pruned).toEqual(recentChanges);
+      expect(hasChanged).toBe(false);
+    });
+  
+    it('should prune old changes based on the default 6-month cutoff', () => {
+      const eightMonthsAgo = new Date();
+      eightMonthsAgo.setMonth(eightMonthsAgo.getMonth() - 8);
+  
+      const changes = [
+        { ETag: 'v1', timestamp: new Date().toISOString(), changes: [] }, // recent
+        { ETag: 'v0', timestamp: eightMonthsAgo.toISOString(), changes: [] }, // old
+      ];
+  
+      const { pruned, hasChanged } = congregation.cleanupMutations(changes);
+      expect(pruned).toHaveLength(1);
+      expect(pruned[0].ETag).toBe('v1');
+      expect(hasChanged).toBe(true);
+    });
+  
+    it('should prune old changes based on a provided cutoff date', () => {
+      const specificCutoff = new Date('2023-06-01T00:00:00Z');
+  
+      const changes = [
+        { ETag: 'v2', timestamp: '2023-07-01T00:00:00Z', changes: [] }, // keep
+        { ETag: 'v1', timestamp: '2023-05-31T23:59:59Z', changes: [] }, // prune
+      ];
+  
+      const { pruned, hasChanged } = congregation.cleanupMutations(changes, specificCutoff);
+      expect(pruned).toHaveLength(1);
+      expect(pruned[0].ETag).toBe('v2');
+      expect(hasChanged).toBe(true);
+    });
+  });
+
   // --- CORE ENGINE TESTS ---
   describe('applyBatchedChanges (Engine)', () => {
     it('should process multiple scopes, merge data correctly, and commit ETag LAST', async () => {
