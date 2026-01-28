@@ -141,7 +141,9 @@ describe('User Model', () => {
 
       expect(realUploads).toContain(`users/${userId}/mutations.json`);
       expect(realUploads).toContain(`users/${userId}/profile.json`);
-      expect(realUploads).toContain(`users/${userId}/field_service_reports.json`);
+      expect(realUploads).toContain(
+        `users/${userId}/field_service_reports.json`
+      );
 
       expect(user.ETag).toBe('v1');
     });
@@ -305,7 +307,9 @@ describe('User Model', () => {
 
       expect(delegatedReportUploadCall).toBeDefined();
 
-      const uploadedDelegatedReports = JSON.parse(delegatedReportUploadCall![1]);
+      const uploadedDelegatedReports = JSON.parse(
+        delegatedReportUploadCall![1]
+      );
       expect(uploadedDelegatedReports.length).toBe(2);
     });
 
@@ -317,7 +321,7 @@ describe('User Model', () => {
         person_uid: 'p1',
         report_date: '2026/01',
         updatedAt: newTimestamp,
-        hours: '10'
+        hours: '10',
       };
 
       await user.applyBatchedChanges([
@@ -332,7 +336,9 @@ describe('User Model', () => {
 
       expect(delegatedReportUploadCall).toBeDefined();
 
-      const uploadedDelegatedReports = JSON.parse(delegatedReportUploadCall![1]);
+      const uploadedDelegatedReports = JSON.parse(
+        delegatedReportUploadCall![1]
+      );
       expect(uploadedDelegatedReports.length).toBe(1);
     });
   });
