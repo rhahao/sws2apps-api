@@ -78,12 +78,10 @@ export class User {
 
     let hasChanges = false;
 
-    // Entries gives you the key and value together
     for (const [key, newVal] of Object.entries(patch)) {
       const k = key as keyof UserProfileServer;
 
       if (newVal !== undefined && merged[k] !== newVal) {
-        // We still need a narrow cast for assignment, but we avoid 'any'
         Object.assign(merged, { [k]: newVal });
         hasChanges = true;
       }
@@ -94,6 +92,7 @@ export class User {
 
   private async saveComponent(fileName: string, data: unknown) {
     if (!data) return;
+
     try {
       const baseKey = `users/${this._id}/`;
 
@@ -102,7 +101,24 @@ export class User {
         JSON.stringify(data),
         'application/json'
       );
-    } catch (error: unknown) {
+
+      // update in-memory data
+      if (fileName === 'profile.json') {
+        this._profile = data as UserProfile;
+      }
+
+      if (fileName === 'settings.json') {
+        this._settings = data as UserSettings;
+      }
+
+      if (fileName === 'sessions.json') {
+        this._sessions = data as UserSession[];
+      }
+
+      if (fileName === 'flags.json') {
+        this._flags = data as string[];
+      }
+    } catch (error) {
       logger.error(`Error saving ${fileName} for user ${this._id}:`, error);
       throw error;
     }
@@ -112,27 +128,9 @@ export class User {
     try {
       const metadata = await s3Service.getObjectMetadata(`users/${this._id}/`);
       return metadata.etag || 'v0';
-    } catch (error: unknown) {
+    } catch (error) {
       logger.error(`Error fetching stored ETag for user ${this._id}:`, error);
       return 'v0';
-    }
-  }
-
-  private async bumpETag() {
-    try {
-      const currentVersion = parseInt(this._ETag.replace('v', ''), 10) || 0;
-      const newEtag = `v${currentVersion + 1}`;
-
-      await s3Service.uploadFile(`users/${this._id}/`, '', 'text/plain', {
-        etag: newEtag,
-      });
-
-      this._ETag = newEtag;
-      logger.info(`User ${this._id} ETag bumped to ${newEtag}`);
-      return newEtag;
-    } catch (error: unknown) {
-      logger.error(`Error bumping ETag for user ${this._id}:`, error);
-      throw error;
     }
   }
 
@@ -142,21 +140,20 @@ export class User {
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
+      const currentVersion = parseInt(this._ETag.replace('v', ''), 10) || 0;
+      const newEtag = `v${currentVersion + 1}`;
 
       // 1. Fetch current mutations
       const mutations = await this.fetchMutations();
 
-      // 2. Determine and sync new ETag
-      const newEtag = await this.bumpETag();
-
-      // 3. Log mutations with the fresh ETag
+      // 2. Add new mutation record with the *prospective* new ETag
       mutations.push({
         ETag: newEtag,
         timestamp,
         changes: recordedMutations,
       });
 
-      // 4. Orchestrate parallel S3 uploads (Data Scopes + Mutation Log)
+      // 3. Orchestrate parallel S3 uploads for data scopes + mutation log
       const uploadPromises: Promise<unknown>[] = [
         this.saveMutations(mutations),
       ];
@@ -166,13 +163,26 @@ export class User {
         uploadPromises.push(this.saveComponent(fileName, entry.data));
       }
 
+      // Wait for all data files to be saved
       await Promise.all(uploadPromises);
 
+      // 4. "Commit" the transaction by updating the ETag in S3
+      await s3Service.uploadFile(`users/${this._id}/`, '', 'text/plain', {
+        etag: newEtag,
+      });
+
+      // 5. Finally, update the in-memory ETag
+      this._ETag = newEtag;
+
       logger.info(
-        `User ${this._id} update saved with ${recordedMutations.length} mutations across ${scopes.length} scopes and ETag ${newEtag}`
+        `User ${this._id} update saved with ${recordedMutations.length} mutations across ${scopes.length} scopes. ETag committed: ${newEtag}`
       );
-    } catch (error: unknown) {
-      logger.error(`Error during saveWithHistory for user ${this._id}:`, error);
+    } catch (error) {
+      logger.error(
+        `Error during saveWithHistory for user ${this._id}. Transaction failed.`,
+        error
+      );
+
       throw error;
     }
   }
@@ -274,19 +284,20 @@ export class User {
     context: UserPatchContext
   ) {
     if (!context.finalDelegatedFieldServiceReports) {
-      context.finalDelegatedFieldServiceReports = await this.getDelegatedFieldServiceReports();
+      context.finalDelegatedFieldServiceReports =
+        await this.getDelegatedFieldServiceReports();
     }
 
     const reports = context.finalDelegatedFieldServiceReports;
-    const reportId = patch.report_date;
+    const reportId = patch.report_id;
 
     if (!reportId) return { hasChanges: false, data: reports };
 
-    const reportIndex = reports.findIndex((r) => r.report_date === reportId);
+    const reportIndex = reports.findIndex((r) => r.report_id === reportId);
     const currentReport =
       reportIndex !== -1
         ? reports[reportIndex]
-        : ({ report_date: reportId } as DelegatedFieldServiceReport);
+        : ({ report_id: reportId } as DelegatedFieldServiceReport);
 
     const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
 
@@ -311,7 +322,7 @@ export class User {
         try {
           const content = await s3Service.getFile(`${baseKey}${fileName}`);
           return content ? JSON.parse(content) : null;
-        } catch (error: unknown) {
+        } catch (error) {
           logger.error(
             `Error loading user ${this._id} file ${fileName}:`,
             error
@@ -345,7 +356,7 @@ export class User {
       }
 
       this._ETag = etag;
-    } catch (error: unknown) {
+    } catch (error) {
       logger.error(`Error loading user ${this._id}:`, error);
     }
   }
@@ -357,24 +368,19 @@ export class User {
   public async applyServerProfilePatch(patch: UserProfileServerUpdate) {
     const baseProfile = this._profile || ({} as UserProfile);
 
-    // Overlay administrative fields (quiet)
     const { merged, hasChanges } = this.applyUserServerChange(
       baseProfile,
       patch
     );
 
     if (hasChanges) {
-      const oldProfile = this._profile;
-      this._profile = merged;
-
       try {
-        await this.saveProfile();
+        await this.saveProfile(merged);
 
         logger.info(
           `Server profile patch applied for user ${this._id} (quiet)`
         );
-      } catch (error: unknown) {
-        this._profile = oldProfile;
+      } catch (error) {
         throw error;
       }
     }
@@ -396,24 +402,28 @@ export class User {
     return this.applyBatchedChanges([{ scope: 'bible_studies', patch }]);
   }
 
-  public async applyDelegatedFieldServiceReporPatch(patch: DelegatedFieldServiceReportUpdate) {
-    return this.applyBatchedChanges([{ scope: 'delegated_field_service_reports', patch }]);
+  public async applyDelegatedFieldServiceReporPatch(
+    patch: DelegatedFieldServiceReportUpdate
+  ) {
+    return this.applyBatchedChanges([
+      { scope: 'delegated_field_service_reports', patch },
+    ]);
   }
 
-  public async saveProfile() {
-    await this.saveComponent('profile.json', this._profile);
+  public async saveProfile(profile: UserProfile) {
+    await this.saveComponent('profile.json', profile);
   }
 
-  public async saveSettings() {
-    await this.saveComponent('settings.json', this._settings);
+  public async saveSettings(settings: UserSettings) {
+    await this.saveComponent('settings.json', settings);
   }
 
-  public async saveSessions() {
-    await this.saveComponent('sessions.json', this._sessions);
+  public async saveSessions(sessions: UserSession) {
+    await this.saveComponent('sessions.json', sessions);
   }
 
-  public async saveFlags() {
-    await this.saveComponent('flags.json', this._flags);
+  public async saveFlags(flags: string[]) {
+    await this.saveComponent('flags.json', flags);
   }
 
   public async saveFieldServiceReports(reports: UserFieldServiceReport[]) {
@@ -424,13 +434,14 @@ export class User {
     await this.saveComponent('bible_studies.json', bibleStudies);
   }
 
-  public async saveDelegatedFieldServiceReports(reports: DelegatedFieldServiceReport[]) {
+  public async saveDelegatedFieldServiceReports(
+    reports: DelegatedFieldServiceReport[]
+  ) {
     await this.saveComponent('delegated_field_service_reports.json', reports);
   }
 
   public async updateFlags(flags: string[]) {
-    await this.saveFlags();
-    this._flags = flags;
+    await this.saveFlags(flags);
   }
 
   public async saveMutations(changes: UserChange[]) {
@@ -445,16 +456,14 @@ export class User {
       if (content) {
         const mutations: UserChange[] = JSON.parse(content);
 
-        // Perform on-demand cleanup
         const { pruned, hasChanged } = this.cleanupMutations(mutations);
         if (hasChanged) {
-          // Synchronously wait for the save to ensure data consistency
           await this.saveMutations(pruned);
           return pruned;
         }
         return mutations;
       }
-    } catch (error: unknown) {
+    } catch (error) {
       logger.error(`Error fetching mutations for user ${this._id}:`, error);
     }
     return [];
@@ -485,10 +494,14 @@ export class User {
     }
   }
 
-  public async getDelegatedFieldServiceReports(): Promise<DelegatedFieldServiceReport[]> {
+  public async getDelegatedFieldServiceReports(): Promise<
+    DelegatedFieldServiceReport[]
+  > {
     try {
       const key = `users/${this._id}/delegated_field_service_reports.json`;
+
       const content = await s3Service.getFile(key);
+      
       return content ? JSON.parse(content) : [];
     } catch (error) {
       logger.error(
@@ -507,7 +520,6 @@ export class User {
       return { pruned: [], hasChanged: false };
     }
 
-    // Use provided date or default to 6 months ago
     const cutoffTime =
       cutoffDate?.getTime() || new Date().setMonth(new Date().getMonth() - 6);
 
@@ -555,7 +567,7 @@ export class User {
         finalSettings: this._settings || ({} as UserSettings),
         finalFieldServiceReports: undefined,
         finalBibleStudies: undefined,
-        finalDelegatedFieldServiceReports: undefined
+        finalDelegatedFieldServiceReports: undefined,
       };
 
       for (const change of changes) {
@@ -584,7 +596,10 @@ export class User {
             result = await this.handleBibleStudiesPatch(change.patch, context);
             break;
           case 'delegated_field_service_reports':
-            result = await this.handleDelegatedFieldServiceReportsPatch(change.patch, context)
+            result = await this.handleDelegatedFieldServiceReportsPatch(
+              change.patch,
+              context
+            );
             break;
         }
 
@@ -595,9 +610,6 @@ export class User {
       }
 
       if (recordedMutations.length > 0) {
-        this._profile = context.finalProfile;
-        this._settings = context.finalSettings;
-
         const finalScopes = Array.from(scopesToSave.entries()).map(
           ([scope, data]) => ({ scope, data })
         );
