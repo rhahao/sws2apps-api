@@ -24,6 +24,8 @@ import {
   CongSource,
   CongSpeaker,
   CongSpeakerUpdate,
+  CongUpcomingEvent,
+  CongUpcomingEventUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -206,10 +208,7 @@ export class Congregation {
 
       return content ? JSON.parse(content) : [];
     } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} schedules:`,
-        error
-      );
+      logger.error(`Error loading congregation ${this._id} schedules:`, error);
       return [];
     }
   }
@@ -222,10 +221,7 @@ export class Congregation {
 
       return content ? JSON.parse(content) : [];
     } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} sources:`,
-        error
-      );
+      logger.error(`Error loading congregation ${this._id} sources:`, error);
       return [];
     }
   }
@@ -240,6 +236,22 @@ export class Congregation {
     } catch (error: unknown) {
       logger.error(
         `Error loading congregation ${this._id} speakers_congregations:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getCongUpcomingEvents(): Promise<CongUpcomingEvent[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/upcoming_events.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} upcoming_events:`,
         error
       );
       return [];
@@ -559,7 +571,7 @@ export class Congregation {
         attendance.push(merged);
       }
     }
-    
+
     return { hasChanges, data: attendance };
   }
 
@@ -572,7 +584,7 @@ export class Congregation {
     }
 
     const schedules = context.finalSchedules;
-    const weekId = patch.weekOf
+    const weekId = patch.weekOf;
 
     if (!weekId) return { hasChanges: false, data: schedules };
 
@@ -601,11 +613,11 @@ export class Congregation {
     context: CongPatchContext
   ) {
     if (!context.finalSources) {
-      context.finalSources = await this.getCongSources()
+      context.finalSources = await this.getCongSources();
     }
 
     const sources = context.finalSources;
-    const weekId = patch.weekOf
+    const weekId = patch.weekOf;
 
     if (!weekId) return { hasChanges: false, data: sources };
 
@@ -625,7 +637,7 @@ export class Congregation {
         sources.push(merged);
       }
     }
-    
+
     return { hasChanges, data: sources };
   }
 
@@ -634,18 +646,18 @@ export class Congregation {
     context: CongPatchContext
   ) {
     if (!context.finalSpeakersCongregations) {
-      context.finalSpeakersCongregations = await this.getCongSpeakers()
+      context.finalSpeakersCongregations = await this.getCongSpeakers();
     }
 
     const speakers = context.finalSpeakersCongregations;
-    const speakerId = patch.id
+    const speakerId = patch.id;
 
     if (!speakerId) return { hasChanges: false, data: speakers };
 
     const speakerIndex = speakers.findIndex((r) => r.id === speakerId);
 
     const currentSpeaker =
-    speakerIndex !== -1
+      speakerIndex !== -1
         ? speakers[speakerIndex]
         : ({ id: speakerId } as CongSpeaker);
 
@@ -658,8 +670,41 @@ export class Congregation {
         speakers.push(merged);
       }
     }
-    
+
     return { hasChanges, data: speakers };
+  }
+
+  private async handleCongUpcomingEventPatch(
+    patch: CongUpcomingEventUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalUpcomingEvents) {
+      context.finalUpcomingEvents = await this.getCongUpcomingEvents();
+    }
+
+    const events = context.finalUpcomingEvents;
+    const eventId = patch.event_uid;
+
+    if (!eventId) return { hasChanges: false, data: events };
+
+    const eventIndex = events.findIndex((r) => r.event_uid === eventId);
+
+    const currentEvent =
+      eventIndex !== -1
+        ? events[eventIndex]
+        : ({ event_uid: eventId } as CongUpcomingEvent);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentEvent, patch);
+
+    if (hasChanges) {
+      if (eventIndex !== -1) {
+        events[eventIndex] = merged;
+      } else {
+        events.push(merged);
+      }
+    }
+
+    return { hasChanges, data: events };
   }
 
   // --- Public Method ---
@@ -772,7 +817,8 @@ export class Congregation {
         | CongMeetingAttendance[]
         | CongSchedule[]
         | CongSource[]
-        | CongSpeaker[];
+        | CongSpeaker[]
+        | CongUpcomingEvent[];
 
       const recordedMutations: CongChange['changes'] = [];
 
@@ -788,7 +834,8 @@ export class Congregation {
         finalMeetingAttendance: undefined,
         finalSchedules: undefined,
         finalSources: undefined,
-        finalSpeakersCongregations: undefined
+        finalSpeakersCongregations: undefined,
+        finalUpcomingEvents: undefined,
       };
 
       for (const change of changes) {
@@ -839,21 +886,19 @@ export class Congregation {
             break;
           }
           case 'schedules': {
-            result = await this.handleCongSchedulePatch(
-              change.patch,
-              context
-            );
+            result = await this.handleCongSchedulePatch(change.patch, context);
             break;
           }
           case 'sources': {
-            result = await this.handleCongSourcePatch(
-              change.patch,
-              context
-            );
+            result = await this.handleCongSourcePatch(change.patch, context);
             break;
           }
           case 'speakers_congregations': {
-            result = await this.handleCongSpeakerPatch(
+            result = await this.handleCongSpeakerPatch(change.patch, context);
+            break;
+          }
+          case 'upcoming_events': {
+            result = await this.handleCongUpcomingEventPatch(
               change.patch,
               context
             );
@@ -937,6 +982,12 @@ export class Congregation {
   }
 
   public async applyCongSpeakerPatch(patch: CongSpeakerUpdate) {
-    return this.applyBatchedChanges([{ scope: 'speakers_congregations', patch }]);
+    return this.applyBatchedChanges([
+      { scope: 'speakers_congregations', patch },
+    ]);
+  }
+
+  public async applyCongUpcomingEventPatch(patch: CongUpcomingEventUpdate) {
+    return this.applyBatchedChanges([{ scope: 'upcoming_events', patch }]);
   }
 }

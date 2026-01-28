@@ -584,6 +584,23 @@ export type CongSpeakerUpdate = DeepPartial<CongSpeaker> & {
   id: string;
 };
 
+export interface CongUpcomingEvent {
+  event_uid: string;
+  _deleted: string;
+  updatedAt: string;
+  start: string;
+  end: string;
+  type: string;
+  category: string;
+  duration: string;
+  description: string;
+  custom: string;
+}
+
+export type CongUpcomingEventUpdate = DeepPartial<CongUpcomingEvent> & {
+  event_uid: string;
+};
+
 export type CongScope =
   | 'persons'
   | 'settings'
@@ -594,7 +611,8 @@ export type CongScope =
   | 'meeting_attendance'
   | 'schedules'
   | 'sources'
-  | 'speakers_congregations';
+  | 'speakers_congregations'
+  | 'upcoming_events';
 
 export type CongChange = {
   ETag: string;
@@ -640,6 +658,10 @@ export type CongChange = {
         scope: 'speakers_congregations';
         patch: CongSpeakerUpdate;
       }
+    | {
+        scope: 'upcoming_events';
+        patch: CongUpcomingEventUpdate;
+      }
   )[];
 };
 
@@ -653,5 +675,6 @@ export interface CongPatchContext {
   finalMeetingAttendance?: CongMeetingAttendance[];
   finalSchedules?: CongSchedule[];
   finalSources?: CongSource[];
-  finalSpeakersCongregations?: CongSpeaker[]
+  finalSpeakersCongregations?: CongSpeaker[];
+  finalUpcomingEvents?: CongUpcomingEvent[];
 }
