@@ -185,4 +185,46 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
       expect(hasChanges).toBe(false);
     });
   });
+
+  describe('CongSchedule Synchronization', () => {
+    it('should perform a deep merge on a single CongSchedule object', () => {
+      const target = {
+        weekOf: '2026-07-20',
+        midweek_meeting: {
+          chairman: {
+            main_hall: [
+              {
+                type: 'main',
+                name: 'John Doe',
+                updatedAt: '2026-07-01T10:00:00Z',
+              },
+            ],
+          },
+        },
+      };
+
+      const patch = {
+        weekOf: '2026-07-20',
+        midweek_meeting: {
+          chairman: {
+            main_hall: [
+              {
+                type: 'main',
+                name: 'Mark Smith',
+                updatedAt: '2026-07-15T12:00:00Z',
+              },
+            ],
+          },
+        },
+      };
+
+      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
+
+      expect(hasChanges).toBe(true);
+      expect(merged.midweek_meeting.chairman.main_hall[0].name).toBe('Mark Smith');
+      expect(merged.midweek_meeting.chairman.main_hall[0].updatedAt).toBe(
+        '2026-07-15T12:00:00Z'
+      );
+    });
+  });
 });
