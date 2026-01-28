@@ -53,11 +53,19 @@ describe('User Model', () => {
       if (key.includes('settings.json')) {
         return JSON.stringify({});
       }
+      if (key.includes('field_service_reports.json')) {
+        return JSON.stringify([
+          {
+            report_date: '2026-01',
+            hours: '10',
+            updatedAt: '2026-01-15T00:00:00Z',
+          },
+        ]);
+      }
       if (
-        key.includes('mutations.json') ||
-        key.includes('field_service_reports.json') ||
         key.includes('bible_studies.json') ||
-        key.includes('delegated_field_service_reports.json')
+        key.includes('delegated_field_service_reports.json') ||
+        key.includes('mutations.json')
       ) {
         return JSON.stringify([]);
       }
@@ -184,14 +192,12 @@ describe('User Model', () => {
       await user.load();
 
       const patch: UserFieldServiceReportsUpdate = {
-        report_date: '2026-03',
-        hours: '5',
+        report_date: '2026-02',
         updatedAt: newTimestamp,
+        hours: '10',
       };
 
-      await user.applyBatchedChanges([
-        { scope: 'field_service_reports', patch },
-      ]);
+      await user.applyBatchedChanges([{ scope: 'field_service_reports', patch }]);
 
       const { calls } = (s3Service.uploadFile as Mock).mock;
 
@@ -251,6 +257,58 @@ describe('User Model', () => {
         realUploads[2].endsWith('delegated_field_service_reports.json')
       ).toBe(true);
       expect(user.ETag).toBe('v1');
+    });
+
+    it('should apply a field_service_reports patch and add a new item to the array', async () => {
+      await user.load();
+
+      const patch: UserFieldServiceReportsUpdate = {
+        report_date: '2026-03',
+        hours: '5',
+        updatedAt: newTimestamp,
+      };
+
+      await user.applyBatchedChanges([
+        { scope: 'field_service_reports', patch },
+      ]);
+
+      const { calls } = (s3Service.uploadFile as Mock).mock;
+
+      const reportUploadCall = calls.find((call) =>
+        call[0].endsWith('field_service_reports.json')
+      );
+
+      expect(reportUploadCall).toBeDefined();
+
+      const uploadedReports = JSON.parse(reportUploadCall![1]);
+
+      expect(uploadedReports.length).toBe(2);
+    });
+
+    it('should update an existing item in field_service_reports array and not change the length', async () => {
+      await user.load();
+
+      const patch: UserFieldServiceReportsUpdate = {
+        report_date: '2026-01', // This date exists in the mock data
+        hours: '15', // The new value
+        updatedAt: newTimestamp,
+      };
+
+      await user.applyBatchedChanges([
+        { scope: 'field_service_reports', patch },
+      ]);
+
+      const { calls } = (s3Service.uploadFile as Mock).mock;
+
+      const reportUploadCall = calls.find((call) =>
+        call[0].endsWith('field_service_reports.json')
+      );
+
+      expect(reportUploadCall).toBeDefined();
+
+      const uploadedReports = JSON.parse(reportUploadCall![1]);
+
+      expect(uploadedReports.length).toBe(1);
     });
   });
 
