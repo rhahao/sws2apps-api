@@ -26,6 +26,7 @@ cong_backup
 .env.development.local
 .env.test.local
 .env.production.local
+firebase.json
 jwt.js
 sample.json
 storage.rules

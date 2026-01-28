@@ -17,6 +17,6 @@
 		"noImplicitReturns": true,
 		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src/**/*", "tests/utils/sync.test.ts"],
+	"include": ["src/**/*", "tests/utils/sync.test.ts", "firebase.ts"],
 	"exclude": ["node_modules", "dist", "tests"]
 }
