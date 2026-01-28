@@ -50,6 +50,146 @@ export class Congregation {
 
   // --- Private Method ---
 
+  private async getStoredEtag() {
+    try {
+      const metadata = await s3Service.getObjectMetadata(
+        `congregations/${this._id}/`
+      );
+
+      return metadata.etag || 'v0';
+    } catch (error: unknown) {
+      logger.error(
+        `Error fetching stored ETag for congregation ${this._id}:`,
+        error
+      );
+
+      return 'v0';
+    }
+  }
+
+  private async fetchMutations(): Promise<CongChange[]> {
+    try {
+      const key = `congregations/${this._id}/mutations.json`;
+      const content = await s3Service.getFile(key);
+
+      if (content) {
+        const mutations: CongChange[] = JSON.parse(content);
+
+        // Perform on-demand cleanup
+        const { pruned, hasChanged } = this.cleanupMutations(mutations);
+
+        if (hasChanged) {
+          await this.saveMutations(pruned);
+
+          return pruned;
+        }
+
+        return mutations;
+      }
+    } catch (error: unknown) {
+      logger.error(
+        `Error fetching mutations for congregation ${this._id}:`,
+        error
+      );
+    }
+    return [];
+  }
+
+  private async getBranchCongAnalysis(): Promise<CongBranchAnalysis[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/branch_cong_analysis.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} branch_cong_analysis:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getBranchFieldServiceReports(): Promise<
+    CongBranchFieldServiceReport[]
+  > {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/branch_field_service_reports.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} branch_field_service_reports:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getCongFieldServiceReports(): Promise<CongFieldServiceReport[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/cong_field_service_reports.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} cong_field_service_reports:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getPersons(): Promise<CongPerson[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/persons.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(`Error loading congregation ${this._id} persons:`, error);
+      return [];
+    }
+  }
+
+  private async getCongFieldServiceGroups(): Promise<CongFieldServiceGroup[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/field_service_groups.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} field_service_groups:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getCongMeetingAttendance(): Promise<CongMeetingAttendance[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/meeting_attendance.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} meeting_attendance:`,
+        error
+      );
+      return [];
+    }
+  }
+
   private applyCongregationServerChange(
     current: CongSettings,
     patch: CongSettingsServerUpdate
@@ -74,6 +214,7 @@ export class Congregation {
 
   private async saveComponent(fileName: string, data: unknown) {
     if (!data) return;
+
     try {
       const baseKey = `congregations/${this._id}/`;
 
@@ -82,53 +223,23 @@ export class Congregation {
         JSON.stringify(data),
         'application/json'
       );
-    } catch (error: unknown) {
+
+      // update in-memory data
+      if (fileName === 'settings.json') {
+        this._settings = data as CongSettings;
+      }
+    } catch (error) {
       logger.error(
         `Error saving component ${fileName} for congregation ${this._id}:`,
         error
       );
+
       throw error;
     }
   }
 
-  private async getStoredEtag() {
-    try {
-      const metadata = await s3Service.getObjectMetadata(
-        `congregations/${this._id}/`
-      );
-
-      return metadata.etag || 'v0';
-    } catch (error: unknown) {
-      logger.error(
-        `Error fetching stored ETag for congregation ${this._id}:`,
-        error
-      );
-
-      return 'v0';
-    }
-  }
-
-  private async bumpETag() {
-    try {
-      const currentVersion = parseInt(this._ETag.replace('v', ''), 10) || 0;
-      const newEtag = `v${currentVersion + 1}`;
-
-      await s3Service.uploadFile(
-        `congregations/${this._id}/`,
-        '',
-        'text/plain',
-        {
-          etag: newEtag,
-        }
-      );
-
-      this._ETag = newEtag;
-      logger.info(`Congregation ${this._id} ETag bumped to ${newEtag}`);
-      return newEtag;
-    } catch (error: unknown) {
-      logger.error(`Error bumping ETag for congregation ${this._id}:`, error);
-      throw error;
-    }
+  private async saveMutations(changes: CongChange[]) {
+    await this.saveComponent('mutations.json', changes);
   }
 
   private async saveWithHistory(
@@ -137,21 +248,20 @@ export class Congregation {
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
+      const currentVersion = parseInt(this._ETag.replace('v', ''), 10) || 0;
+      const newEtag = `v${currentVersion + 1}`;
 
       // 1. Fetch current mutations
       const mutations = await this.fetchMutations();
 
-      // 2. Determine and sync new ETag
-      const newEtag = await this.bumpETag();
-
-      // 3. Log mutations with the fresh ETag
+      // 2. Add new mutation record with the *prospective* new ETag
       mutations.push({
         ETag: newEtag,
         timestamp,
         changes: recordedMutations,
       });
 
-      // 4. Orchestrate parallel S3 uploads (Data Scopes + Mutation Log)
+      // 3. Orchestrate parallel S3 uploads (Data Scopes + Mutation Log)
       const uploadPromises: Promise<unknown>[] = [
         this.saveMutations(mutations),
       ];
@@ -161,7 +271,21 @@ export class Congregation {
         uploadPromises.push(this.saveComponent(fileName, entry.data));
       }
 
+      // Wait for all data files to be saved
       await Promise.all(uploadPromises);
+
+      // 4. "Commit" the transaction by updating the ETag in S3
+      await s3Service.uploadFile(
+        `congregations/${this._id}/`,
+        '',
+        'text/plain',
+        {
+          etag: newEtag,
+        }
+      );
+
+      // 5. Finally, update the in-memory ETag
+      this._ETag = newEtag;
 
       logger.info(
         `Congregation ${this._id} update saved with ${recordedMutations.length} mutations across ${scopes.length} scopes and ETag ${newEtag}`
@@ -433,235 +557,6 @@ export class Congregation {
     }
   }
 
-  public async getBranchCongAnalysis(): Promise<CongBranchAnalysis[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/branch_cong_analysis.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} branch_cong_analysis:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  public async getBranchFieldServiceReports(): Promise<
-    CongBranchFieldServiceReport[]
-  > {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/branch_field_service_reports.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} branch_field_service_reports:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  public async getCongFieldServiceReports(): Promise<CongFieldServiceReport[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/cong_field_service_reports.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} cong_field_service_reports:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  public async getPersons(): Promise<CongPerson[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/persons.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id} persons:`, error);
-      return [];
-    }
-  }
-
-  public async getCongFieldServiceGroups(): Promise<CongFieldServiceGroup[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/field_service_groups.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} field_service_groups:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  public async getCongMeetingAttendance(): Promise<CongMeetingAttendance[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/meeting_attendance.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} meeting_attendance:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  public async savePersons(persons: CongPerson[]) {
-    try {
-      await this.saveComponent('persons.json', persons);
-      await this.bumpETag();
-      logger.info(
-        `Saved ${persons.length} persons and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(`Error saving persons for congregation ${this._id}:`, error);
-      throw error;
-    }
-  }
-
-  public async saveBranchCongAnalysis(
-    analysis: CongBranchAnalysis[]
-  ): Promise<void> {
-    try {
-      await this.saveComponent('branch_cong_analysis.json', analysis);
-      await this.bumpETag();
-      logger.info(
-        `Saved branch_cong_analysis and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(
-        `Error saving branch_cong_analysis for congregation ${this._id}:`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  public async saveBranchFieldServiceReports(
-    reports: CongBranchFieldServiceReport[]
-  ): Promise<void> {
-    try {
-      await this.saveComponent('branch_field_service_reports.json', reports);
-      await this.bumpETag();
-      logger.info(
-        `Saved branch_field_service_reports and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(
-        `Error saving branch_field_service_reports for congregation ${this._id}:`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  public async saveCongFieldServiceReports(
-    reports: CongFieldServiceReport[]
-  ): Promise<void> {
-    try {
-      await this.saveComponent('cong_field_service_reports.json', reports);
-      await this.bumpETag();
-      logger.info(
-        `Saved cong_field_service_reports and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(
-        `Error saving cong_field_service_reports for congregation ${this._id}:`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  public async saveCongFieldServiceGroups(
-    reports: CongFieldServiceGroup[]
-  ): Promise<void> {
-    try {
-      await this.saveComponent('field_service_groups.json', reports);
-      await this.bumpETag();
-      logger.info(
-        `Saved field_service_groups and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(
-        `Error saving field_service_groups for congregation ${this._id}:`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  public async saveCongMeetingAttendance(
-    reports: CongMeetingAttendance[]
-  ): Promise<void> {
-    try {
-      await this.saveComponent('meeting_attendance.json', reports);
-      await this.bumpETag();
-
-      logger.info(
-        `Saved meeting_attendance and bumped ETag for congregation ${this._id}`
-      );
-    } catch (error: unknown) {
-      logger.error(
-        `Error saving meeting_attendance for congregation ${this._id}:`,
-        error
-      );
-      throw error;
-    }
-  }
-
-  public async saveMutations(changes: CongChange[]) {
-    await this.saveComponent('mutations.json', changes);
-  }
-
-  public async fetchMutations(): Promise<CongChange[]> {
-    try {
-      const key = `congregations/${this._id}/mutations.json`;
-      const content = await s3Service.getFile(key);
-
-      if (content) {
-        const mutations: CongChange[] = JSON.parse(content);
-
-        // Perform on-demand cleanup
-        const { pruned, hasChanged } = this.cleanupMutations(mutations);
-
-        if (hasChanged) {
-          await this.saveMutations(pruned);
-          return pruned;
-        }
-        return mutations;
-      }
-    } catch (error: unknown) {
-      logger.error(
-        `Error fetching mutations for congregation ${this._id}:`,
-        error
-      );
-    }
-    return [];
-  }
-
   public cleanupMutations(changes: CongChange[], cutoffDate?: Date) {
     if (!changes || changes.length === 0) {
       return { pruned: [], hasChanged: false };
@@ -679,6 +574,31 @@ export class Congregation {
     });
 
     return { pruned, hasChanged: pruned.length < initialLength };
+  }
+
+  public async applyServerSettingsPatch(patch: CongSettingsServerUpdate) {
+    const baseSettings = this._settings || {};
+
+    const { merged, hasChanges } = this.applyCongregationServerChange(
+      baseSettings,
+      patch
+    );
+
+    if (hasChanges) {
+      const oldSettings = this._settings;
+      this._settings = merged as CongSettings;
+
+      try {
+        await this.saveComponent('settings.json', this._settings);
+
+        logger.info(
+          `Server settings patch applied for congregation ${this._id} (quiet)`
+        );
+      } catch (error: unknown) {
+        this._settings = oldSettings;
+        throw error;
+      }
+    }
   }
 
   public async applyBatchedChanges(changes: CongChange['changes']) {
@@ -781,31 +701,6 @@ export class Congregation {
     } catch (error) {
       logger.error(`Error applying batched changes for ${this._id}:`, error);
       throw error;
-    }
-  }
-
-  public async applyServerSettingsPatch(patch: CongSettingsServerUpdate) {
-    const baseSettings = this._settings || {};
-
-    const { merged, hasChanges } = this.applyCongregationServerChange(
-      baseSettings,
-      patch
-    );
-
-    if (hasChanges) {
-      const oldSettings = this._settings;
-      this._settings = merged as CongSettings;
-
-      try {
-        await this.saveComponent('settings.json', this._settings);
-
-        logger.info(
-          `Server settings patch applied for congregation ${this._id} (quiet)`
-        );
-      } catch (error: unknown) {
-        this._settings = oldSettings;
-        throw error;
-      }
     }
   }
 
