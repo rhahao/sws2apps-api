@@ -22,6 +22,8 @@ import {
   CongSourceUpdate,
   CongSchedule,
   CongSource,
+  CongSpeaker,
+  CongSpeakerUpdate,
 } from '../types/index.js';
 import { s3Service } from '../services/index.js';
 import { applyDeepSyncPatch, logger } from '../utils/index.js';
@@ -222,6 +224,22 @@ export class Congregation {
     } catch (error: unknown) {
       logger.error(
         `Error loading congregation ${this._id} sources:`,
+        error
+      );
+      return [];
+    }
+  }
+
+  private async getCongSpeakers(): Promise<CongSpeaker[]> {
+    try {
+      const content = await s3Service.getFile(
+        `congregations/${this._id}/speakers_congregations.json`
+      );
+
+      return content ? JSON.parse(content) : [];
+    } catch (error: unknown) {
+      logger.error(
+        `Error loading congregation ${this._id} speakers_congregations:`,
         error
       );
       return [];
@@ -611,6 +629,39 @@ export class Congregation {
     return { hasChanges, data: sources };
   }
 
+  private async handleCongSpeakerPatch(
+    patch: CongSpeakerUpdate,
+    context: CongPatchContext
+  ) {
+    if (!context.finalSpeakersCongregations) {
+      context.finalSpeakersCongregations = await this.getCongSpeakers()
+    }
+
+    const speakers = context.finalSpeakersCongregations;
+    const speakerId = patch.id
+
+    if (!speakerId) return { hasChanges: false, data: speakers };
+
+    const speakerIndex = speakers.findIndex((r) => r.id === speakerId);
+
+    const currentSpeaker =
+    speakerIndex !== -1
+        ? speakers[speakerIndex]
+        : ({ id: speakerId } as CongSpeaker);
+
+    const { merged, hasChanges } = applyDeepSyncPatch(currentSpeaker, patch);
+
+    if (hasChanges) {
+      if (speakerIndex !== -1) {
+        speakers[speakerIndex] = merged;
+      } else {
+        speakers.push(merged);
+      }
+    }
+    
+    return { hasChanges, data: speakers };
+  }
+
   // --- Public Method ---
 
   public async load() {
@@ -720,7 +771,8 @@ export class Congregation {
         | CongFieldServiceGroup[]
         | CongMeetingAttendance[]
         | CongSchedule[]
-        | CongSource[];
+        | CongSource[]
+        | CongSpeaker[];
 
       const recordedMutations: CongChange['changes'] = [];
 
@@ -735,7 +787,8 @@ export class Congregation {
         finalFieldServiceGroups: undefined,
         finalMeetingAttendance: undefined,
         finalSchedules: undefined,
-        finalSources: undefined
+        finalSources: undefined,
+        finalSpeakersCongregations: undefined
       };
 
       for (const change of changes) {
@@ -794,6 +847,13 @@ export class Congregation {
           }
           case 'sources': {
             result = await this.handleCongSourcePatch(
+              change.patch,
+              context
+            );
+            break;
+          }
+          case 'speakers_congregations': {
+            result = await this.handleCongSpeakerPatch(
               change.patch,
               context
             );
@@ -874,5 +934,9 @@ export class Congregation {
 
   public async applyCongSourcePatch(patch: CongSourceUpdate) {
     return this.applyBatchedChanges([{ scope: 'sources', patch }]);
+  }
+
+  public async applyCongSpeakerPatch(patch: CongSpeakerUpdate) {
+    return this.applyBatchedChanges([{ scope: 'speakers_congregations', patch }]);
   }
 }

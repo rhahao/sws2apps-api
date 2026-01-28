@@ -546,6 +546,44 @@ export type CongSourceUpdate = DeepPartial<CongSource> & {
   weekOf: string;
 };
 
+export interface CongSpeaker {
+  id: string;
+  _deleted: { value: string; updatedAt: string };
+  cong_id: string;
+  cong_number: { value: string; updatedAt: string };
+  cong_name: { value: string; updatedAt: string };
+  cong_circuit: { value: string; updatedAt: string };
+  cong_location: {
+    address: { value: string; updatedAt: string };
+    lat: number;
+    lng: number;
+  };
+  midweek_meeting: {
+    weekday: { value: number; updatedAt: string };
+    time: { value: string; updatedAt: string };
+  };
+  weekend_meeting: {
+    weekday: { value: number; updatedAt: string };
+    time: { value: string; updatedAt: string };
+  };
+  public_talk_coordinator: {
+    name: { value: string; updatedAt: string };
+    email: { value: string; updatedAt: string };
+    phone: { value: string; updatedAt: string };
+  };
+  coordinator: {
+    name: { value: string; updatedAt: string };
+    email: { value: string; updatedAt: string };
+    phone: { value: string; updatedAt: string };
+  };
+  request_status: string;
+  request_id: string;
+}
+
+export type CongSpeakerUpdate = DeepPartial<CongSpeaker> & {
+  id: string;
+};
+
 export type CongScope =
   | 'persons'
   | 'settings'
@@ -555,7 +593,8 @@ export type CongScope =
   | 'field_service_groups'
   | 'meeting_attendance'
   | 'schedules'
-  | 'sources';
+  | 'sources'
+  | 'speakers_congregations';
 
 export type CongChange = {
   ETag: string;
@@ -597,6 +636,10 @@ export type CongChange = {
         scope: 'sources';
         patch: CongSourceUpdate;
       }
+    | {
+        scope: 'speakers_congregations';
+        patch: CongSpeakerUpdate;
+      }
   )[];
 };
 
@@ -609,5 +652,6 @@ export interface CongPatchContext {
   finalFieldServiceGroups?: CongFieldServiceGroup[];
   finalMeetingAttendance?: CongMeetingAttendance[];
   finalSchedules?: CongSchedule[];
-  finalSources?: CongSource[]
+  finalSources?: CongSource[];
+  finalSpeakersCongregations?: CongSpeaker[]
 }
