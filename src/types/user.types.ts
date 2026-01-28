@@ -61,7 +61,7 @@ export interface UserFieldServiceReport {
   comments: string;
   record_type: string;
   status: string;
-  person_uid: string;
+  person_uid?: string;
 }
 
 export type UserFieldServiceReportsUpdate =

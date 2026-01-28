@@ -1,10 +1,10 @@
-import { GenericObject, SyncResult } from '../types/index.js';
+import { SyncResult, DeepPartial } from '../types/index.js';
 
 /**
  * Checks if a value is a plain object.
  */
-const isObject = (item: unknown) => {
-  return item && typeof item === 'object' && !Array.isArray(item);
+const isObject = (item: unknown): item is Record<string, unknown> => {
+  return item !== null && typeof item === 'object' && !Array.isArray(item);
 };
 
 /**
@@ -19,78 +19,70 @@ const isNewer = (clientDate?: string, serverDate?: string): boolean => {
 /**
  * Recursively applies a patch to a target object using 'updatedAt' for conflict resolution.
  */
-export const applyDeepSyncPatch = <T extends GenericObject>(
+export const applyDeepSyncPatch = <T extends object>(
   target: T,
-  patch: T
+  patch: DeepPartial<T>
 ): SyncResult<T> => {
   let hasChanges = false;
 
   const merge = (currentValue: unknown, incomingValue: unknown): unknown => {
     // 1. Handle Arrays
     if (Array.isArray(incomingValue)) {
-      // FAST EXIT: If target property doesn't exist, adopt the whole array and exit
       if (currentValue === undefined) {
         hasChanges = true;
         return incomingValue;
       }
 
       const resultItems = Array.isArray(currentValue) ? [...currentValue] : [];
-      const incomingArray = incomingValue as unknown[];
+      const incomingArray = incomingValue;
       const lockKeys = ['type', 'id', 'talk_number'] as const;
 
       incomingArray.forEach((patchItem: unknown) => {
         if (isObject(patchItem)) {
-          const itemObj = patchItem as GenericObject;
-          const lockKey = lockKeys.find((k) => k in itemObj);
+          const lockKey = lockKeys.find((k) => k in patchItem);
 
           if (lockKey) {
             const existingIndex = resultItems.findIndex(
-              (l) =>
-                isObject(l) &&
-                (l as GenericObject)[lockKey] === itemObj[lockKey]
+              (l) => isObject(l) && l[lockKey] === patchItem[lockKey]
             );
 
             if (existingIndex === -1) {
-              // Item not found: Add it
-              resultItems.push(itemObj);
+              resultItems.push(patchItem);
               hasChanges = true;
             } else {
-              // Item found: Identity Match
-              const existingItem = resultItems[existingIndex] as GenericObject;
+              const existingItem = resultItems[existingIndex];
+              if (isObject(existingItem)) {
+                if (
+                  'updatedAt' in patchItem &&
+                  typeof patchItem.updatedAt === 'string'
+                ) {
+                  let isNew = false;
+                  if (
+                    'updatedAt' in existingItem &&
+                    typeof existingItem.updatedAt === 'string'
+                  ) {
+                    isNew = isNewer(
+                      patchItem.updatedAt,
+                      existingItem.updatedAt
+                    );
+                  } else {
+                    isNew = true;
+                  }
 
-              // GATEKEEPER: If both items have updatedAt, it's the final authority
-              if ('updatedAt' in itemObj) {
-                let isNew = false;
-
-                if ('updatedAt' in existingItem) {
-                  const incomingDate = itemObj.updatedAt as string;
-                  const existingDate = existingItem.updatedAt as string;
-
-                  isNew = isNewer(incomingDate, existingDate);
+                  if (isNew) {
+                    resultItems[existingIndex] = {
+                      ...existingItem,
+                      ...patchItem,
+                    };
+                    hasChanges = true;
+                  }
                 } else {
-                  isNew = true;
+                  resultItems[existingIndex] = merge(existingItem, patchItem);
                 }
-
-                if (isNew) {
-                  resultItems[existingIndex] = {
-                    ...(existingItem ?? {}),
-                    ...itemObj,
-                  };
-                  hasChanges = true;
-                }
-              } else {
-                // No timestamps: Perform deep merge.
-                // The merge() function will handle updating the 'hasChanges' flag internally.
-                resultItems[existingIndex] = merge(
-                  existingItem,
-                  itemObj
-                ) as GenericObject;
               }
             }
           } else {
-            // No Lock Key found: This array item cannot be tracked by identity.
-            // Usually, we skip or push, but in sync logic, we'd typically push as new.
-            resultItems.push(itemObj);
+            resultItems.push(patchItem);
             hasChanges = true;
           }
         }
@@ -101,45 +93,45 @@ export const applyDeepSyncPatch = <T extends GenericObject>(
 
     // 2. Handle Objects
     if (isObject(incomingValue)) {
-      const incomingObj = incomingValue as GenericObject;
-
-      // NEW CHECK: If the target doesn't have this property at all
       if (currentValue === undefined) {
         hasChanges = true;
-        return incomingObj; // Add the new object and exit this branch
+        return incomingValue;
       }
 
-      // If we have a target, ensure it's treated as an object
-      const currentObj = (
-        isObject(currentValue) ? currentValue : {}
-      ) as GenericObject;
+      if (isObject(currentValue)) {
+        if (
+          'updatedAt' in incomingValue &&
+          typeof incomingValue.updatedAt === 'string'
+        ) {
+          let isNew = false;
+          if (
+            'updatedAt' in currentValue &&
+            typeof currentValue.updatedAt === 'string'
+          ) {
+            isNew = isNewer(incomingValue.updatedAt, currentValue.updatedAt);
+          } else {
+            isNew = true;
+          }
 
-      // GATEKEEPER: If both have updatedAt, this is the final authority.
-      if ('updatedAt' in incomingObj) {
-        let isNew = false;
-
-        if ('updatedAt' in currentObj) {
-          const incomingDate = incomingObj.updatedAt as string;
-          const existingDate = currentObj.updatedAt as string;
-
-          isNew = isNewer(incomingDate, existingDate);
-        } else {
-          isNew = true;
+          if (isNew) {
+            hasChanges = true;
+            return { ...currentValue, ...incomingValue };
+          }
+          return currentValue;
         }
 
-        if (isNew) {
-          hasChanges = true;
-          return { ...(currentObj ?? {}), ...incomingObj };
-        }
-        return currentObj;
-      }
+        const mergedResult: Record<string, unknown> = { ...currentValue };
 
-      // If we reach here, we are doing a deep merge because timestamps are missing on one or both sides.
-      const mergedResult: GenericObject = { ...currentObj };
-      for (const key in incomingObj) {
-        mergedResult[key] = merge(currentObj[key], incomingObj[key]);
+        for (const key in incomingValue) {
+          if (Object.prototype.hasOwnProperty.call(incomingValue, key)) {
+            const currentPropValue = currentValue[key];
+            const incomingPropValue = incomingValue[key];
+            mergedResult[key] = merge(currentPropValue, incomingPropValue);
+          }
+        }
+        
+        return mergedResult;
       }
-      return mergedResult;
     }
 
     return currentValue;
