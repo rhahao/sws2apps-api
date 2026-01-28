@@ -188,6 +188,57 @@ describe('Congregation Model', () => {
       expect(s3Service.uploadFile).not.toHaveBeenCalled();
       expect(congregation.ETag).toBe('v0');
     });
+
+    it('should perform a deep merge that preserves nested structures not present in the patch', async () => {
+      await congregation.load();
+      // Mock has: midweek_meeting: { chairman: { main_hall: [...] } }
+
+      const partialPatch: CongScheduleUpdate = {
+        weekOf: '2026/01/05',
+        midweek_meeting: {
+          chairman: {
+            aux_class_1: {
+              type: 'main',
+              value: 'Brother Jones',
+              updatedAt: newTimestamp,
+            },
+          },
+        },
+      };
+
+      await congregation.applyCongSchedulePatch(partialPatch as any);
+
+      const upload = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
+        c[0].includes('schedules.json')
+      );
+      const data = JSON.parse(upload![1]);
+
+      // 1. The new field is there
+      expect(data[0].midweek_meeting.chairman.aux_class_1.value).toBe(
+        'Brother Jones'
+      );
+      // 2. The CRITICAL check: The chairman (not in patch) was NOT deleted
+      expect(data[0].midweek_meeting.chairman.main_hall).toBeDefined();
+    });
+
+    it('should initialize a new file if S3 returns null', async () => {
+      (s3Service.getFile as Mock).mockResolvedValueOnce(null); // File doesn't exist yet
+
+      await congregation.applyCongSourcePatch({
+        weekOf: '2026/01/26',
+        midweek_meeting: {
+          event_name: [
+            { type: 'main', value: 'event', updatedAt: newTimestamp },
+          ],
+        },
+      });
+
+      const upload = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
+        c[0].endsWith('sources.json')
+      );
+
+      expect(JSON.parse(upload![1])).toHaveLength(1);
+    });
   });
 
   // --- CONVENIENCE WRAPPER TESTS ---
@@ -254,8 +305,8 @@ describe('Congregation Model', () => {
       ];
 
       for (const item of wrappers) {
-        await (congregation)[item.fn](item.patch);
-        
+        await congregation[item.fn](item.patch);
+
         expect(spy).toHaveBeenCalledWith([
           { scope: item.scope, patch: item.patch },
         ]);
