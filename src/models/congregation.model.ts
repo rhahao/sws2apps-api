@@ -649,29 +649,27 @@ export class Congregation {
       context.finalSpeakersCongregations = await this.getCongSpeakers();
     }
 
-    const speakers = context.finalSpeakersCongregations;
-    const speakerId = patch.id;
+    const congs = context.finalSpeakersCongregations;
+    const congId = patch.id;
 
-    if (!speakerId) return { hasChanges: false, data: speakers };
+    if (!congId) return { hasChanges: false, data: congs };
 
-    const speakerIndex = speakers.findIndex((r) => r.id === speakerId);
+    const congIndex = congs.findIndex((r) => r.id === congId);
 
-    const currentSpeaker =
-      speakerIndex !== -1
-        ? speakers[speakerIndex]
-        : ({ id: speakerId } as CongSpeaker);
+    const currentCong =
+      congIndex !== -1 ? congs[congIndex] : ({ id: congId } as CongSpeaker);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentSpeaker, patch);
+    const { merged, hasChanges } = applyDeepSyncPatch(currentCong, patch);
 
     if (hasChanges) {
-      if (speakerIndex !== -1) {
-        speakers[speakerIndex] = merged;
+      if (congIndex !== -1) {
+        congs[congIndex] = merged;
       } else {
-        speakers.push(merged);
+        congs.push(merged);
       }
     }
 
-    return { hasChanges, data: speakers };
+    return { hasChanges, data: congs };
   }
 
   private async handleCongUpcomingEventPatch(

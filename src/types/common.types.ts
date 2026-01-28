@@ -36,6 +36,17 @@ export interface PaginatedResponse<T> extends ApiResponse<T> {
 	};
 }
 
+export interface SyncField<T = string> {
+  value: T;
+  updatedAt: string;
+}
+
+export interface SyncArrayItem {
+  id: string;
+  updatedAt: string;
+  _deleted: string;
+}
+
 /**
  * Recursive Partial utility for nested object structures
  */
