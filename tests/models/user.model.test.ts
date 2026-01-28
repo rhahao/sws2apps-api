@@ -98,16 +98,27 @@ describe('User Model', () => {
   describe('applyServerProfilePatch', () => {
     it('should apply a server profile patch without bumping ETag or saving history', async () => {
       await user.load();
+
       const serverPatch: UserProfileServerUpdate = { role: 'vip' };
+
       await user.applyServerProfilePatch(serverPatch);
 
       const { calls } = (s3Service.uploadFile as Mock).mock;
 
+      // 1. Verify specific file path was hit
+      const profileUpload = calls.find((c) => c[0].endsWith('profile.json'));
+      expect(profileUpload).toBeDefined();
+
+      // 2. VERIFY CONTENT (Integrity Check)
+      const uploadedData = JSON.parse(profileUpload![1]);
+      expect(uploadedData.role).toBe('vip');
+
+      // 3. VERIFY IN-MEMORY STATE
+      expect(user.profile?.role).toBe('vip');
+
+      // 4. Verify "Quiet" behavior
       const realUploads = calls.map((c) => c[0]) as string[];
-
-      expect(realUploads).toContain(`users/${userId}/profile.json`);
       expect(realUploads).not.toContain(`users/${userId}/mutations.json`);
-
       expect(user.ETag).toBe('v0');
     });
   });
@@ -134,37 +145,41 @@ describe('User Model', () => {
       await user.applyBatchedChanges(batch);
 
       const { calls } = (s3Service.uploadFile as Mock).mock;
-      // It saves: 1. mutations, 2. profile, 3. field_service_reports, 4. ETag
-      expect(calls.length).toBe(4);
 
       const realUploads = calls.map((c) => c[0]) as string[];
 
-      expect(realUploads).toContain(`users/${userId}/mutations.json`);
-      expect(realUploads).toContain(`users/${userId}/profile.json`);
-      expect(realUploads).toContain(
-        `users/${userId}/field_service_reports.json`
+      expect(realUploads).toEqual(
+        expect.arrayContaining([
+          `users/${userId}/mutations.json`,
+          `users/${userId}/profile.json`,
+          `users/${userId}/field_service_reports.json`,
+          `users/${userId}/`,
+        ])
       );
 
       expect(user.ETag).toBe('v1');
     });
 
-    it('should not update ETag if S3 upload fails during batch', async () => {
+    it('should not update ETag if a data file upload fails (Commit Last)', async () => {
       await user.load();
-
+    
+      // 1. We mock the FIRST file upload to fail (e.g., profile.json)
       (s3Service.uploadFile as Mock)
-        .mockResolvedValueOnce({}) // ETag bump succeeds
-        .mockRejectedValueOnce(new Error('S3 Upload Failed')); // mutations.json fails
-
+        .mockRejectedValueOnce(new Error('S3 Connection Lost'));
+    
       const patch: UserProfileClientUpdate = {
         firstname: { value: 'Patched', updatedAt: newTimestamp },
       };
-
+    
       await expect(
         user.applyBatchedChanges([{ scope: 'profile', patch }])
-      ).rejects.toThrow('S3 Upload Failed');
-
-      // ETag should not be updated in the user object if the process fails.
-      expect(user.profile!.firstname.value).toBe('Old');
+      ).rejects.toThrow('S3 Connection Lost');
+    
+      // 2. PROOF: The ETag upload was never even called because the engine short-circuited
+      const { calls } = (s3Service.uploadFile as Mock).mock;
+      const etagCall = calls.find(c => c[0] === `users/${userId}/`);
+      
+      expect(etagCall).toBeUndefined(); // This is the gold standard for safety
       expect(user.ETag).toBe('v0');
     });
 
@@ -214,12 +229,12 @@ describe('User Model', () => {
       expect(uploadedReports.length).toBe(2);
     });
 
-    it('should update an existing item in field_service_reports array and not change the length', async () => {
+    it('should update an existing item in field_service_reports without duplicating or losing data', async () => {
       await user.load();
 
       const patch: UserFieldServiceReportsUpdate = {
-        report_date: '2026-01',
-        hours: '15',
+        report_date: '2026-01', // Identity key
+        hours: '15', // The change
         updatedAt: newTimestamp,
       };
 
@@ -227,16 +242,23 @@ describe('User Model', () => {
         { scope: 'field_service_reports', patch },
       ]);
 
-      const { calls } = (s3Service.uploadFile as Mock).mock;
-
-      const reportUploadCall = calls.find((call) =>
-        call[0].endsWith('field_service_reports.json')
+      const reportUploadCall = (s3Service.uploadFile as Mock).mock.calls.find(
+        (call) => call[0].endsWith('field_service_reports.json')
       );
 
-      expect(reportUploadCall).toBeDefined();
-
       const uploadedReports = JSON.parse(reportUploadCall![1]);
+      const updatedReport = uploadedReports.find(
+        (r: any) => r.report_date === '2026-01'
+      );
+
+      // 1. Length check (Identity check)
       expect(uploadedReports.length).toBe(1);
+
+      // 2. Value check (The patch)
+      expect(updatedReport.hours).toBe('15');
+
+      // 3. Integrity check (Preserving data not in the patch)
+      expect(updatedReport.updatedAt).toBe(newTimestamp);
     });
 
     it('should apply a bible_studies patch and increase array length', async () => {
@@ -262,11 +284,11 @@ describe('User Model', () => {
       expect(uploadedStudies.length).toBe(2);
     });
 
-    it('should update an existing bible_study and not change the length', async () => {
+    it('should update an existing bible_study and record it in mutations', async () => {
       await user.load();
 
       const patch: UserBibleStudiesUpdate = {
-        person_uid: 'study-1', // existing id
+        person_uid: 'study-1',
         person_name: 'Updated Name',
         updatedAt: newTimestamp,
       };
@@ -275,14 +297,23 @@ describe('User Model', () => {
 
       const { calls } = (s3Service.uploadFile as Mock).mock;
 
-      const bibleStudyUploadCall = calls.find((call) =>
-        call[0].endsWith('bible_studies.json')
+      // 1. Verify S3 Data Integrity
+      const dataCall = calls.find((c) => c[0].endsWith('bible_studies.json'));
+      const data = JSON.parse(dataCall![1]);
+      const study = data.find((s: any) => s.person_uid === 'study-1');
+
+      expect(data.length).toBe(1);
+      expect(study.person_name).toBe('Updated Name');
+
+      // 2. Verify Mutation Log (The "Memory" proxy)
+      const mutationCall = calls.find((c) => c[0].endsWith('mutations.json'));
+      const mutations = JSON.parse(mutationCall![1]);
+      const lastMutation = mutations[mutations.length - 1];
+
+      expect(lastMutation.changes[0].scope).toBe('bible_studies');
+      expect((lastMutation.changes[0].patch as any).person_name).toBe(
+        'Updated Name'
       );
-
-      expect(bibleStudyUploadCall).toBeDefined();
-
-      const uploadedStudies = JSON.parse(bibleStudyUploadCall![1]);
-      expect(uploadedStudies.length).toBe(1);
     });
 
     it('should apply a delegated_field_service_reports patch and increase array length', async () => {
@@ -313,33 +344,31 @@ describe('User Model', () => {
       expect(uploadedDelegatedReports.length).toBe(2);
     });
 
-    it('should update an existing delegated_field_service_report and not change the length', async () => {
+    it('should update an existing delegated_field_service_report without duplicating', async () => {
       await user.load();
-
+    
       const patch: DelegatedFieldServiceReportUpdate = {
-        report_id: 'delegated-1', // existing id
+        report_id: 'delegated-1',
         person_uid: 'p1',
         report_date: '2026/01',
         updatedAt: newTimestamp,
-        hours: '10',
+        hours: '12',
       };
-
+    
       await user.applyBatchedChanges([
         { scope: 'delegated_field_service_reports', patch },
       ]);
-
+    
       const { calls } = (s3Service.uploadFile as Mock).mock;
-
-      const delegatedReportUploadCall = calls.find((call) =>
-        call[0].endsWith('delegated_field_service_reports.json')
-      );
-
-      expect(delegatedReportUploadCall).toBeDefined();
-
-      const uploadedDelegatedReports = JSON.parse(
-        delegatedReportUploadCall![1]
-      );
-      expect(uploadedDelegatedReports.length).toBe(1);
+      const dataCall = calls.find((c) => c[0].endsWith('delegated_field_service_reports.json'));
+      const data = JSON.parse(dataCall![1]);
+    
+      // Ensure length is still 1 (Updated, not Appended)
+      expect(data.length).toBe(1);
+      
+      const report = data.find((r: any) => r.report_id === 'delegated-1');
+      expect(report.hours).toBe('12');
+      expect(report.updatedAt).toBe(newTimestamp);
     });
   });
 

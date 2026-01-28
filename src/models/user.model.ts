@@ -374,15 +374,9 @@ export class User {
     );
 
     if (hasChanges) {
-      try {
-        await this.saveProfile(merged);
+      await this.saveProfile(merged);
 
-        logger.info(
-          `Server profile patch applied for user ${this._id} (quiet)`
-        );
-      } catch (error) {
-        throw error;
-      }
+      logger.info(`Server profile patch applied for user ${this._id} (quiet)`);
     }
   }
 
@@ -501,7 +495,7 @@ export class User {
       const key = `users/${this._id}/delegated_field_service_reports.json`;
 
       const content = await s3Service.getFile(key);
-      
+
       return content ? JSON.parse(content) : [];
     } catch (error) {
       logger.error(
