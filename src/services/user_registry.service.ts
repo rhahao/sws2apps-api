@@ -9,7 +9,11 @@ class UserRegistry {
 		return Array.from(this.users.values()).filter((u) => u.profile?.role !== 'admin').length;
 	}
 
-	async loadIndex() {
+	private getUsers() {
+		return Array.from(this.users.values());
+	}
+
+	public async loadIndex() {
 		try {
 			const startTime = Date.now();
 			logger.info('Indexing users from storage...');
@@ -48,19 +52,21 @@ class UserRegistry {
 		}
 	}
 
-	getUsers() {
-		return Array.from(this.users.values());
-	}
-
-	hasUser(id: string) {
+	public has(id: string) {
 		return this.users.has(id);
 	}
 
-	findById(id: string) {
+	public findById(id: string) {
 		return this.users.get(id);
 	}
 
-	async performHistoryMaintenance() {
+	public findByEmail(email: string) {
+		const users = this.getUsers()
+
+		return users.find(user => user.email?.toLowerCase() === email.toLowerCase())
+	}
+
+	public async performHistoryMaintenance() {
 		logger.info('Starting daily history maintenance...');
 
 		const users = this.getUsers();

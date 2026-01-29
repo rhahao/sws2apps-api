@@ -65,7 +65,7 @@ export class SeederService {
     for (const testUser of testUsers) {
       try {
         // 2. Ensure user exists in S3 via Registry check
-        if (!userRegistry.hasUser(testUser.id)) {
+        if (!userRegistry.has(testUser.id)) {
           const user = new User(testUser.id);
           const timestamp = new Date().toISOString();
 
