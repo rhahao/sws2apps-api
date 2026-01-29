@@ -207,11 +207,11 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
 
       const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
 
-      const profile = merged as UserProfile
+      const profile = merged as UserProfile;
 
       expect(hasChanges).toBe(true);
       expect(profile.firstname.value).toBe(patch.firstname.value);
-      expect(profile.firstname.updatedAt).toBe(patch.firstname.updatedAt)
+      expect(profile.firstname.updatedAt).toBe(patch.firstname.updatedAt);
       expect(profile.lastname.value).toBe(target.lastname.value); // Unchanged
     });
 
@@ -222,7 +222,10 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
           value: 'true',
           updatedAt: '2026-01-10T10:00:00Z',
         },
-        hour_credits_enabled: { value: 'true', updatedAt: '2026-01-10T10:00:00Z' },
+        hour_credits_enabled: {
+          value: 'true',
+          updatedAt: '2026-01-10T10:00:00Z',
+        },
         data_view: { value: 'card', updatedAt: '2026-01-10T10:00:00Z' },
       };
 
@@ -232,19 +235,21 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
 
       const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
 
-      const settings = merged as UserSettings
+      const settings = merged as UserSettings;
 
       expect(hasChanges).toBe(true);
       expect(settings.data_view.value).toBe(patch.data_view.value);
       expect(settings.data_view.updatedAt).toBe(patch.data_view.updatedAt);
-      expect(settings.backup_automatic.value).toBe(target.backup_automatic.value);
+      expect(settings.backup_automatic.value).toBe(
+        target.backup_automatic.value
+      );
     });
 
     it('should merge a UserFieldServiceReport patch', () => {
       const target: UserFieldServiceReport = {
         report_date: '2026/02',
         _deleted: false,
-        updatedAt: '2026-02-10T10:00:00Z', 
+        updatedAt: '2026-02-10T10:00:00Z',
         shared_ministry: 'true',
         hours: '10',
         bible_studies: '1',
