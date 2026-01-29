@@ -5,6 +5,10 @@ import { Congregation } from '../models/index.js';
 class CongregationRegistry {
 	private congregations: Map<string, Congregation> = new Map();
 
+	get count() {
+		return this.congregations.size;
+	}
+
 	async loadIndex() {
 		try {
 			logger.info('Indexing congregations from storage...');
@@ -41,10 +45,6 @@ class CongregationRegistry {
 
 	findById(id: string) {
 		return this.congregations.get(id);
-	}
-
-	getCongregationsCount() {
-		return this.congregations.size;
 	}
 }
 

@@ -1,4 +1,23 @@
 {
+  "api": {
+    "installations.json": [],
+    "flags.json": [
+      {
+        "id": "flag-id",
+        "name": "FLAG_NAME",
+        "description": "flag description",
+        "availability": "app",
+        "status": true,
+        "coverage": 100,
+        "installations": [],
+        "users": [],
+        "congregations": []
+      }
+    ],
+    "settings.json": {
+      "client_minimum_version": "1.0.0"
+    }
+  },
   "users": {
     "bible_studies.json": [
       {

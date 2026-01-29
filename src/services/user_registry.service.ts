@@ -2,8 +2,12 @@ import { logger } from '../utils/index.js';
 import { User } from '../models/index.js';
 import { s3Service } from './s3.service.js';
 
-export class UserRegistry {
+class UserRegistry {
 	private users: Map<string, User> = new Map();
+
+	get count() {
+		return Array.from(this.users.values()).filter((u) => u.profile?.role !== 'admin').length;
+	}
 
 	async loadIndex() {
 		try {
@@ -56,17 +60,15 @@ export class UserRegistry {
 		return this.users.get(id);
 	}
 
-	getUsersCount() {
-		// V3 logic filtered by role !== admin
-		return Array.from(this.users.values()).filter((u) => u.profile?.role !== 'admin').length;
-	}
-
 	async performHistoryMaintenance() {
 		logger.info('Starting daily history maintenance...');
+
 		const users = this.getUsers();
+
 		let usersCleaned = 0;
 
 		const cutoff = new Date();
+		
 		cutoff.setMonth(cutoff.getMonth() - 6);
 
 		for (const user of users) {
@@ -84,7 +86,7 @@ export class UserRegistry {
 				const sessionsPruned = user.cleanupSessions(cutoff);
 
 				if (sessionsPruned) {
-					await user.saveSessions();
+					await user.saveSessions(user.sessions);
 				}
 
 				if (hasChanged || sessionsPruned) {

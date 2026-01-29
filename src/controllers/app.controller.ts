@@ -7,18 +7,32 @@ export const getFeatureFlags = async (req: Request, res: Response) => {
     const installationId = req.headers['installation'] as string;
     let userId = req.headers['user'] as string | undefined;
 
-    const knownInstallation = appService.installations.all.find(
+    const knownInstallation = appService.installations.find(
       (i) => i.id === installationId
     );
-    userId = userId || knownInstallation?.user;
+
+    // installation not found, save it
+    if (!knownInstallation) {
+      const installations = [...appService.installations];
+
+      installations.push({
+        id: installationId,
+        last_used: new Date().toISOString(),
+        user: '',
+      });
+
+      await appService.saveInstallations(installations);
+    }
+
+    userId = knownInstallation?.user || userId;
 
     const result = await appService.evaluateFeatureFlags(
       installationId,
       userId
     );
-    await appService.updateInstallationRegistry(installationId, userId);
 
     logger.info(`Feature flags fetched for installation ${installationId}`);
+
     res.status(200).json(result);
   } catch (error) {
     logger.error('Error fetching feature flags:', error);

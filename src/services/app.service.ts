@@ -1,53 +1,103 @@
-import {
-  FeatureFlag,
-  LinkedInstallation,
-  RawInstallationItem,
-  InstallationItem,
-} from '../types/index.js';
+import { FeatureFlag, Installation } from '../types/index.js';
 import { logger } from '../utils/index.js';
+import { congregationRegistry } from './congregation_registry.service.js';
 import { s3Service } from './s3.service.js';
 import { userRegistry } from './user_registry.service.js';
-import { congregationRegistry } from './congregation_registry.service.js';
 
-class AppService {
-  public clientMinimumVersion = '0.0.0';
+export class AppService {
   public isReady = false;
-  public flags: FeatureFlag[] = [];
-  public installations = {
-    all: [] as InstallationItem[],
-    linked: [] as LinkedInstallation[],
-    pending: [] as RawInstallationItem[],
-  };
+  private _clientMinimumVersion = '1.0.0';
+  private _flags: FeatureFlag[] = [];
+  private _installations: Installation[] = [];
 
-  // Refactored feature flag evaluation logic
-  async evaluateFeatureFlags(installationId: string, userId?: string) {
-    const result: Record<string, boolean> = {};
-    const enabledFlags = this.flags.filter((record) => record.status);
-
-    for (const flag of enabledFlags) {
-      switch (flag.availability) {
-        case 'app':
-          await this._handleAppFlag(flag, installationId, result);
-          break;
-        case 'congregation':
-          await this._handleCongregationFlag(flag, userId, result);
-          break;
-        case 'user':
-          await this._handleUserFlag(flag, userId, result);
-          break;
-      }
-    }
-
-    return result;
+  public get flags() {
+    return this._flags;
   }
 
-  // Helper function to handle app-level feature flags
-  private async _handleAppFlag(
+  public get installations() {
+    return this._installations;
+  }
+
+  public get clientMinimumVersion() {
+    return this._clientMinimumVersion;
+  }
+
+  private async loadSettings() {
+    const key = 'api/settings.json';
+
+    const exist = await s3Service.fileExists(key);
+
+    if (exist) {
+      const content = await s3Service.getFile(key);
+      const settings = JSON.parse(content!);
+
+      this._clientMinimumVersion = settings.client_minimum_version;
+    } else {
+      logger.info(`${key} not found. Creating default settings...`);
+
+      const defaultSettings = { client_minimum_version: '1.0.0' };
+
+      await s3Service.uploadFile(
+        key,
+        JSON.stringify(defaultSettings),
+        'application/json'
+      );
+
+      this._clientMinimumVersion = defaultSettings.client_minimum_version;
+
+      logger.info(`${key} created successfully.`);
+    }
+  }
+
+  private async loadInstallations() {
+    const key = 'api/installations.json';
+
+    const exist = await s3Service.fileExists(key);
+
+    if (exist) {
+      const content = await s3Service.getFile(key);
+      const data = JSON.parse(content!);
+
+      this._installations = data;
+    } else {
+      logger.info(`${key} not found. Creating default storage...`);
+
+      await s3Service.uploadFile(key, JSON.stringify([]), 'application/json');
+
+      this._installations = [];
+
+      logger.info(`${key} created successfully.`);
+    }
+  }
+
+  private async loadFlags() {
+    const key = 'api/flags.json';
+
+    const exist = await s3Service.fileExists(key);
+
+    if (exist) {
+      const content = await s3Service.getFile(key);
+      const data = JSON.parse(content!);
+
+      this._flags = data;
+    } else {
+      logger.info(`${key} not found. Creating default storage...`);
+
+      await s3Service.uploadFile(key, JSON.stringify([]), 'application/json');
+
+      this._flags = [];
+
+      logger.info(`${key} created successfully.`);
+    }
+  }
+
+  private async handleAppFlag(
+    result: Record<string, boolean>,
     flag: FeatureFlag,
     installationId: string,
-    result: Record<string, boolean>
+    userId?: string
   ) {
-    const installationsCount = this.installations.all.length;
+    const installationsCount = this.installations.length;
 
     if (flag.coverage === 100) {
       result[flag.name] = true;
@@ -56,39 +106,50 @@ class AppService {
 
     if (flag.coverage === 0) return;
 
-    const findInstallation = flag.installations.find(
-      (rec) => rec.id === installationId
+    const foundUser = flag.users.find((rec) => rec === userId);
+    const foundInstallation = flag.installations.find(
+      (rec) => rec === installationId
     );
 
-    if (findInstallation) {
+    const foundFlag = foundInstallation ?? foundUser;
+
+    if (foundFlag) {
       result[flag.name] = true;
-    } else {
-      const currentCount = flag.installations.length;
-      const currentAvg =
-        installationsCount === 0
-          ? 0
-          : (currentCount * 100) / installationsCount;
-
-      if (currentAvg < flag.coverage) {
-        result[flag.name] = true;
-
-        flag.installations.push({
-          id: installationId,
-          registered: new Date().toISOString(),
-          status: 'pending',
-        });
-
-        await this.saveFlags();
-      }
+      return;
     }
+
+    const currentCount = flag.installations.length;
+    const currentAvg =
+      installationsCount === 0 ? 0 : (currentCount * 100) / installationsCount;
+
+    if (currentAvg >= flag.coverage) {
+      return;
+    }
+
+    result[flag.name] = true;
+
+    const flags = [...this._flags];
+    const flagIndex = flags.findIndex((f) => f.id === flag.id);
+
+    if (!foundInstallation) {
+      flags[flagIndex].installations.push(installationId);
+    }
+
+    if (!foundUser && userId) {
+      flags[flagIndex].users.push(userId);
+    }
+
+    await this.saveFlags(flags);
   }
 
-  // Helper function to handle congregation-level feature flags
-  private async _handleCongregationFlag(
+  private async handleCongregationFlag(
+    result: Record<string, boolean>,
     flag: FeatureFlag,
-    userId: string | undefined,
-    result: Record<string, boolean>
+    installationId: string,
+    userId?: string
   ) {
+    userId = this._installations.find(i => i.id === installationId)?.user ?? userId
+
     if (!userId) return;
 
     const user = userRegistry.findById(userId);
@@ -97,154 +158,136 @@ class AppService {
     if (!congId) return;
 
     const cong = congregationRegistry.findById(congId);
+
     if (!cong) return;
 
-    const congregationsCount = congregationRegistry.getCongregationsCount();
-    const hasFlag = cong.flags.includes(flag.id);
+    if (flag.coverage === 100) {
+      result[flag.name] = true;
+      return;
+    }
+
+    const hasFlag = flag.congregations.includes(congId);
 
     if (hasFlag) {
       result[flag.name] = true;
       return;
     }
 
-    if (flag.coverage === 100) {
-      result[flag.name] = true;
-      await cong.saveFlags([...cong.flags, flag.id]);
-    } else if (flag.coverage > 0) {
-      const congsWithFlag = congregationRegistry
-        .getCongregations()
-        .filter((c) => c.flags.includes(flag.id)).length;
-      const currentAvg =
-        congregationsCount === 0
-          ? 0
-          : (congsWithFlag * 100) / congregationsCount;
+    const congsWithFlag = flag.congregations.length;
+    const congregationsCount = congregationRegistry.count;
 
-      if (currentAvg < flag.coverage) {
-        result[flag.name] = true;
-        await cong.saveFlags([...cong.flags, flag.id]);
-      }
+    const currentAvg =
+      congregationsCount === 0 ? 0 : (congsWithFlag * 100) / congregationsCount;
+
+    if (currentAvg >= flag.coverage) {
+      return;
     }
+
+    result[flag.name] = true;
+
+    const flags = [...this._flags];
+    const flagIndex = flags.findIndex((f) => f.id === flag.id);
+    flags[flagIndex].congregations.push(congId);
+
+    await this.saveFlags(flags);
   }
 
-  // Helper function to handle user-level feature flags
-  private async _handleUserFlag(
+  private async handleUserFlag(
+    result: Record<string, boolean>,
     flag: FeatureFlag,
-    userId: string | undefined,
-    result: Record<string, boolean>
+    installationId: string,
+    userId?: string
   ) {
+    userId = this._installations.find(i => i.id === installationId)?.user || userId
+
     if (!userId) return;
 
     const user = userRegistry.findById(userId);
+
     if (!user) return;
 
-    const usersCount = userRegistry.getUsersCount();
-    const hasFlag = user.flags?.includes(flag.id);
+    if (flag.coverage === 100) {
+      result[flag.name] = true;
+      return;
+    }
+
+    const hasFlag = flag.users.includes(userId);
 
     if (hasFlag) {
       result[flag.name] = true;
       return;
     }
 
-    if (flag.coverage === 100) {
-      result[flag.name] = true;
-      await user.updateFlags([...(user.flags || []), flag.id]);
-    } else if (flag.coverage > 0) {
-      const usersWithFlag = userRegistry
-        .getUsers()
-        .filter((u) => u.flags?.includes(flag.id)).length;
-      const currentAvg =
-        usersCount === 0 ? 0 : (usersWithFlag * 100) / usersCount;
+    const usersWithFlag = flag.users.length;
+    const usersCount = userRegistry.count
 
-      if (currentAvg < flag.coverage) {
-        result[flag.name] = true;
-        await user.updateFlags([...(user.flags || []), flag.id]);
-      }
+    const currentAvg =
+    usersCount === 0 ? 0 : (usersWithFlag * 100) / usersCount;
+
+    if (currentAvg >= flag.coverage) {
+      return;
     }
+
+    result[flag.name] = true;
+
+    const flags = [...this._flags];
+    const flagIndex = flags.findIndex((f) => f.id === flag.id);
+    flags[flagIndex].users.push(userId);
+
+    await this.saveFlags(flags);
   }
 
-  // Refactored installation registry update logic
-  async updateInstallationRegistry(installationId: string, userId?: string) {
-    const findInstallation = this.installations.all.find(
-      (i) => i.id === installationId
-    );
-    let needsSave = false;
+  public async load() {
+    try {
+      await this.loadSettings();
+      await this.loadInstallations();
+      await this.loadFlags();
 
-    if (!findInstallation && userId) {
-      this.installations.linked.push({
-        user: userId,
-        installations: [
-          { id: installationId, registered: new Date().toISOString() },
-        ],
-      });
-      needsSave = true;
-    } else if (!findInstallation && !userId) {
-      this.installations.pending.push({
-        id: installationId,
-        registered: new Date().toISOString(),
-      });
-      needsSave = true;
-    } else if (findInstallation?.status === 'pending' && userId) {
-      this.installations.pending = this.installations.pending.filter(
-        (i) => i.id !== installationId
+      logger.info(
+        `Loaded client minimum version: ${this._clientMinimumVersion}`
       );
 
-      const userGroup = this.installations.linked.find(
-        (l) => l.user === userId
-      );
-      if (userGroup) {
-        userGroup.installations.push({
-          id: installationId,
-          registered: new Date().toISOString(),
-        });
-      } else {
-        this.installations.linked.push({
-          user: userId,
-          installations: [
-            { id: installationId, registered: new Date().toISOString() },
-          ],
-        });
-      }
-      needsSave = true;
-    }
+      logger.info(`Loaded ${this._installations.length} total installations`);
 
-    if (needsSave) {
-      await this.saveInstallations();
+      logger.info(`Loaded ${this._flags.length} feature flags`);
+    } catch (error) {
+      logger.error(`Error loading app service::`, error);
     }
   }
 
-  public processInstallations(): void {
-    const result: InstallationItem[] = [];
+  public async evaluateFeatureFlags(installationId: string, userId?: string) {
+    const result: Record<string, boolean> = {};
+    const enabledFlags = this.flags.filter((record) => record.status);
 
-    for (const user of this.installations.linked) {
-      for (const installation of user.installations) {
-        result.push({
-          id: installation.id,
-          registered: installation.registered,
-          status: 'linked',
-          user: user.user,
-        });
+    for (const flag of enabledFlags) {
+      switch (flag.availability) {
+        case 'app':
+          await this.handleAppFlag(result, flag, installationId, userId);
+          break;
+        case 'congregation':
+          await this.handleCongregationFlag(result, flag, installationId, userId);
+          break;
+        case 'user':
+          await this.handleUserFlag(result, flag, installationId, userId);
+          break;
       }
     }
 
-    for (const installation of this.installations.pending) {
-      result.push({
-        id: installation.id,
-        registered: installation.registered,
-        status: 'pending',
-      });
-    }
-
-    this.installations.all = result;
+    return result;
   }
 
-  public async saveFlags(): Promise<void> {
+  public async saveFlags(flags: FeatureFlag[]) {
     try {
       const key = 'api/flags.json';
+
       await s3Service.uploadFile(
         key,
         JSON.stringify(this.flags),
         'application/json'
       );
+
+      this._flags = flags;
+
       logger.info('Feature flags synchronized to S3');
     } catch (error) {
       logger.error('Error saving feature flags to S3:', error);
@@ -252,15 +295,18 @@ class AppService {
     }
   }
 
-  public async saveInstallations(): Promise<void> {
+  public async saveInstallations(installations: Installation[]) {
     try {
       const key = 'api/installations.json';
-      const data = {
-        linked: this.installations.linked,
-        pending: this.installations.pending,
-      };
-      await s3Service.uploadFile(key, JSON.stringify(data), 'application/json');
-      this.processInstallations(); // Refresh local flattened list
+
+      await s3Service.uploadFile(
+        key,
+        JSON.stringify(installations),
+        'application/json'
+      );
+
+      this._installations = installations;
+
       logger.info('Installation registry synchronized to S3');
     } catch (error) {
       logger.error('Error saving installation registry to S3:', error);

@@ -25,7 +25,7 @@ export class User {
   private _email?: string;
   private _auth_provider?: string;
   private _profile?: UserProfile;
-  private _sessions?: UserSession[];
+  private _sessions: UserSession[] = []
   private _settings?: UserSettings;
   private _ETag: string = 'v0';
 
@@ -398,7 +398,7 @@ export class User {
     await this.saveComponent('settings.json', settings);
   }
 
-  public async saveSessions(sessions: UserSession) {
+  public async saveSessions(sessions: UserSession[]) {
     await this.saveComponent('sessions.json', sessions);
   }
 

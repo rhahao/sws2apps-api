@@ -4,7 +4,6 @@ import {
   CongSettingsServerUpdate,
   CongSettingsUpdate,
   CongScheduleUpdate,
-  CongSchedule,
 } from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
 import { s3Service } from '../../src/services/index.js';
@@ -252,7 +251,7 @@ describe('Congregation Model', () => {
         },
       };
 
-      await congregation.applyCongSchedulePatch(partialPatch as any);
+      await congregation.applyCongSchedulePatch(partialPatch);
 
       const upload = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
         c[0].includes('schedules.json')

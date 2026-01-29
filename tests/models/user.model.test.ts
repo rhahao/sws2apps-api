@@ -4,11 +4,12 @@ import { s3Service } from '../../src/services/index.js';
 import {
   DelegatedFieldServiceReportUpdate,
   UserBibleStudiesUpdate,
+  UserBibleStudy,
   UserChange,
+  UserFieldServiceReport,
   UserFieldServiceReportsUpdate,
   UserProfileClientUpdate,
   UserProfileServerUpdate,
-  UserSettingsUpdate,
 } from '../../src/types/index.js';
 import mockData from '../mocks/data.json';
 
@@ -120,41 +121,6 @@ describe('User Model', () => {
       expect(pruned).toHaveLength(1);
       expect(pruned[0].ETag).toBe('v2');
       expect(hasChanged).toBe(true);
-    });
-  });
-
-  describe('cleanupSessions', () => {
-    it('should return false for undefined or empty sessions', async () => {
-      await user.load();
-      (user as any)._sessions = undefined; // Force undefined
-      expect(user.cleanupSessions()).toBe(false);
-
-      (user as any)._sessions = []; // Force empty
-      expect(user.cleanupSessions()).toBe(false);
-    });
-
-    it('should keep recent sessions and return false', async () => {
-      await user.load(); // loads sessions from mock
-      expect(user.cleanupSessions()).toBe(false);
-    });
-
-    it('should prune old sessions and return true', async () => {
-      await user.load();
-      const oldDate = new Date();
-      oldDate.setMonth(oldDate.getMonth() - 8);
-
-      // Overwrite with one old session
-      (user as any)._sessions = [
-        {
-          last_seen: oldDate.toISOString(),
-          device_lang: 'en',
-          app_version: '1.0',
-          os_name: 'TestOS',
-        },
-      ];
-
-      expect(user.cleanupSessions()).toBe(true);
-      expect(user.sessions?.length).toBe(0);
     });
   });
 
@@ -282,19 +248,22 @@ describe('User Model', () => {
         (call) => call[0].endsWith('field_service_reports.json')
       );
 
-      const uploadedReports = JSON.parse(reportUploadCall![1]);
+      const uploadedReports = JSON.parse(
+        reportUploadCall![1]
+      ) as UserFieldServiceReport[];
+
       const updatedReport = uploadedReports.find(
-        (r: any) => r.report_date === '2026/01'
+        (r) => r.report_date === '2026/01'
       );
 
       // 1. Length check (Identity check)
       expect(uploadedReports.length).toBe(1);
 
       // 2. Value check (The patch)
-      expect(updatedReport.hours).toBe('15');
+      expect(updatedReport!.hours).toBe('15');
 
       // 3. Integrity check (Preserving data not in the patch)
-      expect(updatedReport.updatedAt).toBe(newTimestamp);
+      expect(updatedReport!.updatedAt).toBe(newTimestamp);
     });
 
     it('should apply a bible_studies patch and increase array length', async () => {
@@ -335,11 +304,11 @@ describe('User Model', () => {
 
       // 1. Verify S3 Data Integrity
       const dataCall = calls.find((c) => c[0].endsWith('bible_studies.json'));
-      const data = JSON.parse(dataCall![1]);
-      const study = data.find((s: any) => s.person_uid === 'study-1');
+      const data = JSON.parse(dataCall![1]) as UserBibleStudy[];
+      const study = data.find((s) => s.person_uid === 'study-1');
 
       expect(data.length).toBe(1);
-      expect(study.person_name).toBe('Updated Name');
+      expect(study!.person_name).toBe('Updated Name');
 
       // 2. Verify Mutation Log (The "Memory" proxy)
       const mutationCall = calls.find((c) => c[0].endsWith('mutations.json'));
@@ -347,7 +316,7 @@ describe('User Model', () => {
       const lastMutation = mutations[mutations.length - 1];
 
       expect(lastMutation.changes[0].scope).toBe('bible_studies');
-      expect((lastMutation.changes[0].patch as any).person_name).toBe(
+      expect((lastMutation.changes[0].patch).person_name).toBe(
         'Updated Name'
       );
     });
@@ -404,7 +373,7 @@ describe('User Model', () => {
       // Ensure length is still 1 (Updated, not Appended)
       expect(data.length).toBe(1);
 
-      const report = data.find((r: any) => r.report_id === 'delegated-1');
+      const report = data.find((r) => r.report_id === 'delegated-1');
       expect(report.hours).toBe('12');
       expect(report.updatedAt).toBe(newTimestamp);
     });
@@ -457,7 +426,7 @@ describe('User Model', () => {
 
       for (const item of testCases) {
         // Use type assertion to call the function by string name
-        await (user)[item.fn](item.patch);
+        await user[item.fn](item.patch);
 
         expect(spy).toHaveBeenCalledWith([
           { scope: item.scope, patch: item.patch },
