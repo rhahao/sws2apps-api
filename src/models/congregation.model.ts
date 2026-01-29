@@ -32,7 +32,6 @@ import { applyDeepSyncPatch, logger } from '../utils/index.js';
 
 export class Congregation {
   private _id: string;
-  private _flags: string[] = [];
   private _ETag: string = 'v0';
   private _settings = {} as CongSettings;
 
@@ -42,10 +41,6 @@ export class Congregation {
 
   get id(): string {
     return this._id;
-  }
-
-  get flags(): string[] {
-    return this._flags;
   }
 
   get ETag() {
@@ -723,9 +718,8 @@ export class Congregation {
         }
       };
 
-      const [settingsData, flagsData, etag] = await Promise.all([
+      const [settingsData, etag] = await Promise.all([
         fetchFile('settings.json'),
-        fetchFile('flags.json'),
         this.getStoredEtag(),
       ]);
 
@@ -733,29 +727,9 @@ export class Congregation {
         this._settings = settingsData;
       }
 
-      if (flagsData) {
-        this._flags = flagsData;
-      }
-
       this._ETag = etag;
     } catch (error: unknown) {
       logger.error(`Error loading congregation ${this._id}:`, error);
-    }
-  }
-
-  public async saveFlags(flags: string[]) {
-    try {
-      const key = `congregations/${this.id}/flags.json`;
-      await s3Service.uploadFile(
-        key,
-        JSON.stringify(flags),
-        'application/json'
-      );
-      this._flags = flags;
-      logger.info(`Updated flags for congregation ${this.id}`);
-    } catch (error: unknown) {
-      logger.error(`Error saving flags for congregation ${this.id}:`, error);
-      throw error;
     }
   }
 

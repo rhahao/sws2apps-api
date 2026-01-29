@@ -27,7 +27,6 @@ export class User {
   private _profile?: UserProfile;
   private _sessions?: UserSession[];
   private _settings?: UserSettings;
-  private _flags?: string[];
   private _ETag: string = 'v0';
 
   constructor(id: string) {
@@ -58,10 +57,6 @@ export class User {
 
   get settings() {
     return this._settings;
-  }
-
-  get flags() {
-    return this._flags;
   }
 
   get ETag() {
@@ -113,10 +108,6 @@ export class User {
 
       if (fileName === 'sessions.json') {
         this._sessions = data as UserSession[];
-      }
-
-      if (fileName === 'flags.json') {
-        this._flags = data as string[];
       }
     } catch (error) {
       logger.error(`Error saving ${fileName} for user ${this._id}:`, error);
@@ -330,12 +321,11 @@ export class User {
         }
       };
 
-      const [profileData, settingsData, sessionsData, flagsData, etag] =
+      const [profileData, settingsData, sessionsData, etag] =
         await Promise.all([
           fetchFile('profile.json'),
           fetchFile('settings.json'),
           fetchFile('sessions.json'),
-          fetchFile('flags.json'),
           this.getStoredEtag(),
         ]);
 
@@ -349,10 +339,6 @@ export class User {
 
       if (sessionsData) {
         this._sessions = sessionsData;
-      }
-
-      if (flagsData) {
-        this._flags = flagsData;
       }
 
       this._ETag = etag;
@@ -416,10 +402,6 @@ export class User {
     await this.saveComponent('sessions.json', sessions);
   }
 
-  public async saveFlags(flags: string[]) {
-    await this.saveComponent('flags.json', flags);
-  }
-
   public async saveFieldServiceReports(reports: UserFieldServiceReport[]) {
     await this.saveComponent('field_service_reports.json', reports);
   }
@@ -432,10 +414,6 @@ export class User {
     reports: DelegatedFieldServiceReport[]
   ) {
     await this.saveComponent('delegated_field_service_reports.json', reports);
-  }
-
-  public async updateFlags(flags: string[]) {
-    await this.saveFlags(flags);
   }
 
   public async saveMutations(changes: UserChange[]) {

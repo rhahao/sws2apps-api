@@ -15,11 +15,6 @@ export type AppRoleType =
 	| 'language_group_overseers'
 	| 'duties_schedule';
 
-export interface RawInstallationItem {
-	id: string;
-	registered: string;
-}
-
 export interface FeatureFlag {
 	id: string;
 	name: string;
@@ -27,15 +22,13 @@ export interface FeatureFlag {
 	availability: 'app' | 'user' | 'congregation';
 	status: boolean;
 	coverage: number;
-	installations: InstallationItem[];
+	installations: string[];
+	users: string[];
+	congregations: string[];
 }
 
-export interface LinkedInstallation {
-	user: string;
-	installations: RawInstallationItem[];
-}
-
-export interface InstallationItem extends RawInstallationItem {
-	status: 'linked' | 'pending';
-	user?: string;
+export interface Installation {
+	id: string;
+	last_used: string
+	user: string
 }
