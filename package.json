@@ -15,7 +15,7 @@
     "lint:fix": "eslint . --ext .ts --fix",
     "minio:start": "docker compose up -d && tsx src/scripts/empty-bucket.ts",
     "minio:stop": "docker compose down",
-    "firebase:start": "firebase emulators:start --only auth --project organized-local"
+    "firebase:start": "firebase emulators:start --project organized-local"
   },
   "keywords": [],
   "author": "",
