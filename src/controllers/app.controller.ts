@@ -5,6 +5,7 @@ import { appService } from '../services/index.js';
 export const getFeatureFlags = async (req: Request, res: Response) => {
   try {
     const installationId = req.headers['installation'] as string;
+
     let userId = req.headers['user'] as string | undefined;
 
     const knownInstallation = appService.installations.find(
@@ -18,7 +19,7 @@ export const getFeatureFlags = async (req: Request, res: Response) => {
       installations.push({
         id: installationId,
         last_used: new Date().toISOString(),
-        user: '',
+        user: userId ?? '',
       });
 
       await appService.saveInstallations(installations);

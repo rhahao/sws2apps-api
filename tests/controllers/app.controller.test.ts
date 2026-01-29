@@ -1,134 +1,91 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { Request, Response } from 'express';
 import { getFeatureFlags } from '../../src/controllers/app.controller.js';
-import { AppService } from '../../src/services/app.service.js';
-import { s3Service } from '../../src/services/index.js';
-import mockData from '../mocks/data.json';
+import { appService } from '../../src/services/app.service.js';
+import { Installation } from '../../src/types/app.types.js';
 
 // Mock the config for logger
-vi.mock('../../src/config/index.js', () => ({
-  ENV: {
-    nodeEnv: 'development',
-  },
-}));
-
-// Mock s3Service
-vi.mock('../../src/services/s3.service.js', () => ({
-  s3Service: {
-    fileExists: vi.fn(),
-    getFile: vi.fn(),
-    uploadFile: vi.fn(),
-    getObjectMetadata: vi.fn(),
-  },
-}));
-
-// Mock logger
-vi.mock('../../src/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+vi.mock('../../src/config/index.js');
+vi.mock('../../src/utils/logger.js');
+vi.mock('../../src/services/app.service.js');
+vi.mock('../../src/services/s3.service.js');
 
 describe('getFeatureFlags', () => {
-  let appService: AppService;
   let req: Partial<Request>;
   let res: Partial<Response>;
   let json: Mock;
   let status: Mock;
 
   beforeEach(() => {
-    appService = new AppService();
-
     json = vi.fn();
     status = vi.fn(() => ({ json }));
     res = { status };
 
     vi.clearAllMocks();
-
-    // Setup base S3 mocks
-    (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-      const finalKey = key.split('/').at(-1)!;     
-
-      const data = mockData.api[finalKey];
-
-      if (data) {
-        return JSON.stringify(data);
-      }
-
-      return null;
-    });
-
-    (s3Service.fileExists as Mock).mockResolvedValue(true)
   });
 
-  it('should call services and return feature flags on success', async () => {
-    await appService.load();
+  it('should register a new installation if it does not exist', async () => {
+    const installationId = 'new-inst';
+    const userId = 'user-id';
 
-    req = {
-      headers: {
-        installation: 'test-installation-id',
-        user: 'test-user-id',
-      },
-    };
+    req = { headers: { installation: installationId, user: userId } };
+
+    // Mock the getter to return an empty array for this test
+    vi.spyOn(appService, 'installations', 'get').mockReturnValue([]);
+
+    const mockFlags = { FLAG_NAME: true };
+
+    (appService.evaluateFeatureFlags as Mock).mockResolvedValue(mockFlags);
 
     await getFeatureFlags(req as Request, res as Response);
 
-    // expect(appService.saveInstallations).toHaveBeenCalled();
+    const { calls } = (appService.saveInstallations as Mock).mock;
 
-    // expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith(
-    //   'test-installation-id',
-    //   'test-user-id'
-    // );
+    const installations = calls[0][0] as Installation[]
 
-    expect(true).toBe(true)
+    expect(installations).toHaveLength(1)
+    expect(installations.at(0)!.id).toBe(installationId)
+    expect(installations.at(0)!.user).toBe(userId)
+
+    expect(status).toHaveBeenCalledWith(200);
+    expect(json).toHaveBeenCalledWith(mockFlags);
   });
 
-  // it('should derive userId from known installation if not in header', async () => {
-  //   const mockFlags = { 'another-feature': false };
+  it('should return feature flags but NOT save the installation if it already exists', async () => {
+    const installationId = 'existing-inst';
+    const userId = 'user-123';
+    
+    req = { 
+      headers: { 
+        installation: installationId, 
+        user: userId 
+      } 
+    };
+  
+    // 1. Mock the registry so the installation IS found
+    const existingInstallations: Installation[] = [
+      { 
+        id: installationId, 
+        user: userId, 
+        last_used: new Date().toISOString() 
+      }
+    ];
 
-  //   appService.installations = [
-  //     { id: 'known-installation-id', user: 'derived-user-id', last_used: '' },
-  //   ];
-  //   (appService.evaluateFeatureFlags as Mock).mockResolvedValue(mockFlags);
+    vi.spyOn(appService, 'installations', 'get').mockReturnValue(existingInstallations);
+  
+    // 2. Mock the service to return flags
+    const mockFlags = { NEW_FEATURE: true };
 
-  //   req = {
-  //     headers: { installation: 'known-installation-id' }, // No user header
-  //   };
-
-  //   await getFeatureFlags(req as Request, res as Response);
-
-  //   expect(appService.saveInstallations).not.toHaveBeenCalled();
-
-  //   expect(appService.evaluateFeatureFlags).toHaveBeenCalledWith(
-  //     'known-installation-id',
-  //     'derived-user-id'
-  //   );
-
-  //   expect(status).toHaveBeenCalledWith(200);
-  //   expect(json).toHaveBeenCalledWith(mockFlags);
-  // });
-
-  // it('should handle errors gracefully', async () => {
-  //   const error = new Error('Something went wrong');
-  //   (appService.evaluateFeatureFlags as Mock).mockRejectedValue(error);
-
-  //   req = {
-  //     headers: {
-  //       installation: 'test-installation-id',
-  //       user: 'test-user-id',
-  //     },
-  //   };
-
-  //   await getFeatureFlags(req as Request, res as Response);
-
-  //   expect(status).toHaveBeenCalledWith(500);
-  //   expect(json).toHaveBeenCalledWith({
-  //     success: false,
-  //     error: {
-  //       message: 'Internal server error',
-  //       code: 'api.server.internal_error',
-  //     },
-  //   });
-  // });
+    (appService.evaluateFeatureFlags as Mock).mockResolvedValue(mockFlags);
+  
+    await getFeatureFlags(req as Request, res as Response);
+  
+    // 3. ASSERTIONS
+    // Ensure we DID NOT call save
+    expect(appService.saveInstallations).not.toHaveBeenCalled();
+  
+    // Ensure we still got a 200 and the flags
+    expect(status).toHaveBeenCalledWith(200);
+    expect(json).toHaveBeenCalledWith(mockFlags);
+  });
 });
