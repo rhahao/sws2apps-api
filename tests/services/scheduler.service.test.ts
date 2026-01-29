@@ -83,3 +83,35 @@ describe('SchedulerService', () => {
     expect(failingTask.run).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('SchedulerService Cleanup', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    schedulerService.stopAll();
+    vi.useRealTimers();
+  });
+
+  it('should stop all tasks and prevent further execution', async () => {
+    const mockTask = {
+      name: 'cleanup-test',
+      interval: 1000,
+      run: vi.fn().mockResolvedValue(undefined),
+    };
+
+    schedulerService.register(mockTask);
+
+    // Run once
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockTask.run).toHaveBeenCalledTimes(1);
+
+    // Stop everything
+    schedulerService.stopAll();
+
+    // Advance time again - should NOT run a second time
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockTask.run).toHaveBeenCalledTimes(1);
+  });
+});
