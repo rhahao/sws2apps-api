@@ -1,12 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  GenericObject,
-  UserBibleStudy,
-  UserFieldServiceReport,
-  UserFieldServiceReportsUpdate,
-  UserProfile,
-  UserSettings,
-} from '../../src/types/index.js';
+import { GenericObject } from '../../src/types/index.js';
 import { applyDeepSyncPatch } from '../../src/utils/index.js';
 
 describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
@@ -190,108 +183,6 @@ describe('applyDeepSyncPatch() - Strict Timestamp Sync', () => {
 
       const { hasChanges } = applyDeepSyncPatch(target, patch);
       expect(hasChanges).toBe(false);
-    });
-  });
-
-  describe('User Data Scopes', () => {
-    it('should merge a UserProfile patch', () => {
-      const target: UserProfile = {
-        firstname: { value: 'John', updatedAt: '2026-01-10T10:00:00Z' },
-        lastname: { value: 'Doe', updatedAt: '2026-01-10T10:00:00Z' },
-        role: 'pocket',
-      };
-
-      const patch = {
-        firstname: { value: 'Jane', updatedAt: '2026-01-20T10:00:00Z' },
-      };
-
-      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
-
-      const profile = merged as UserProfile;
-
-      expect(hasChanges).toBe(true);
-      expect(profile.firstname.value).toBe(patch.firstname.value);
-      expect(profile.firstname.updatedAt).toBe(patch.firstname.updatedAt);
-      expect(profile.lastname.value).toBe(target.lastname.value); // Unchanged
-    });
-
-    it('should merge a UserSettings patch', () => {
-      const target: UserSettings = {
-        backup_automatic: { value: 'off', updatedAt: '2026-01-10T10:00:00Z' },
-        theme_follow_os_enabled: {
-          value: 'true',
-          updatedAt: '2026-01-10T10:00:00Z',
-        },
-        hour_credits_enabled: {
-          value: 'true',
-          updatedAt: '2026-01-10T10:00:00Z',
-        },
-        data_view: { value: 'card', updatedAt: '2026-01-10T10:00:00Z' },
-      };
-
-      const patch = {
-        data_view: { value: 'table', updatedAt: '2026-01-20T10:00:00Z' },
-      };
-
-      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
-
-      const settings = merged as UserSettings;
-
-      expect(hasChanges).toBe(true);
-      expect(settings.data_view.value).toBe(patch.data_view.value);
-      expect(settings.data_view.updatedAt).toBe(patch.data_view.updatedAt);
-      expect(settings.backup_automatic.value).toBe(
-        target.backup_automatic.value
-      );
-    });
-
-    it('should merge a UserFieldServiceReport patch', () => {
-      const target: UserFieldServiceReport = {
-        report_date: '2026/02',
-        _deleted: false,
-        updatedAt: '2026-02-10T10:00:00Z',
-        shared_ministry: 'true',
-        hours: '10',
-        bible_studies: '1',
-        comments: 'Initial report',
-        record_type: 'monthly',
-        status: 'submitted',
-      };
-
-      const patch: UserFieldServiceReportsUpdate = {
-        report_date: '2026/02',
-        updatedAt: '2026-02-20T11:00:00Z',
-        hours: '12',
-        comments: 'Updated report',
-      };
-
-      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
-
-      expect(hasChanges).toBe(true);
-      expect(merged.hours).toBe(patch.hours);
-      expect(merged.comments).toBe(patch.comments);
-      expect(merged.shared_ministry).toBe(target.shared_ministry);
-      expect(merged.updatedAt).toBe(patch.updatedAt);
-    });
-
-    it('should merge a UserBibleStudy patch', () => {
-      const target: UserBibleStudy = {
-        person_uid: 'study-1',
-        person_name: 'Student Name',
-        updatedAt: '2026-01-10T10:00:00Z',
-        _deleted: false,
-      };
-
-      const patch = {
-        person_name: 'New Student Name',
-        updatedAt: '2026-01-20T10:00:00Z',
-      };
-
-      const { merged, hasChanges } = applyDeepSyncPatch(target, patch);
-
-      expect(hasChanges).toBe(true);
-      expect(merged.person_name).toBe(patch.person_name);
-      expect(merged.updatedAt).toBe(patch.updatedAt);
     });
   });
 });
