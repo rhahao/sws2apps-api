@@ -1,3 +1,5 @@
+import { ZodType } from "zod";
+
 export type AppRoleType =
 	| 'admin'
 	| 'coordinator'
@@ -31,4 +33,11 @@ export interface Installation {
 	id: string;
 	last_used: string
 	user: string
+}
+
+export interface RequestSchemas<Body = unknown, Query = unknown, Params = unknown, Headers = unknown> {
+	body?: ZodType<Body>;
+	query?: ZodType<Query>;
+	params?: ZodType<Params>;
+	headers?: ZodType<Headers>;
 }

@@ -1,13 +1,9 @@
 import { IncomingHttpHeaders } from 'node:http';
 import { Request, Response, NextFunction } from 'express';
-import { ZodError, ZodType } from 'zod';
+import { ZodError } from 'zod';
+import { RequestSchemas } from '../types/app.types.js';
 
-interface RequestSchemas<Body = unknown, Query = unknown, Params = unknown, Headers = unknown> {
-	body?: ZodType<Body>;
-	query?: ZodType<Query>;
-	params?: ZodType<Params>;
-	headers?: ZodType<Headers>;
-}
+
 
 /**
  * Higher-order middleware to validate requests using Zod schemas.
