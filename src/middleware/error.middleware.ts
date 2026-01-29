@@ -6,7 +6,7 @@ import { logger } from '../utils/index.js';
  */
 export class ApiError extends Error {
 	constructor(
-		public statusCode: number,
+		public status: number,
 		public code: string,
 		message: string,
 	) {
@@ -19,11 +19,11 @@ export class ApiError extends Error {
  * Global error handling middleware
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export const errorHandler = (err: Error, _req: Request, res: Response, _: NextFunction): void => {
+export const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction): void => {
 	// Log the full error for server-side auditing
 	logger.error('Error occurred:', err);
 
-	const statusCode = err instanceof ApiError ? err.statusCode : 500;
+	const statusCode = err instanceof ApiError ? err.status : 500;
 	const code = err instanceof ApiError ? err.code : 'api.server.internal_error';
 
 	// In production, we don't leak internal error messages unless they are explicitly set in ApiError
