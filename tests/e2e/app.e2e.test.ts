@@ -3,25 +3,15 @@ import supertest from 'supertest';
 import app from '../../src/app.js';
 
 // Mock logger
-vi.mock('../../src/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  },
-}));
+vi.mock('../../src/utils/logger.js');
 
 vi.mock('../../src/services/index.js', () => ({
   appService: {
     isReady: true, // This is the key to bypassing the readinessGuard
-    installations: {
-      all: [],
-      linked: [],
-      pending: [],
-    },
+    installations: [],
     flags: [],
-    evaluateFeatureFlags: vi.fn().mockResolvedValue({}), // Mock the new method
-    updateInstallationRegistry: vi.fn().mockResolvedValue(undefined), // Mock the new method
+    evaluateFeatureFlags: vi.fn().mockResolvedValue({ FLAG: true }),
+    updateInstallationRegistry: vi.fn().mockResolvedValue(undefined),
     saveFlags: vi.fn().mockResolvedValue(undefined),
     saveInstallations: vi.fn().mockResolvedValue(undefined),
   },
@@ -75,7 +65,7 @@ describe('Public Endpoints', () => {
         .set('installation', 'test-installation-id');
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({});
+      expect(response.body).toEqual({ FLAG: true });
     });
 
     it('should return 400 Bad Request if installation header is missing', async () => {
