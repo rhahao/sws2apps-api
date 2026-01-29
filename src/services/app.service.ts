@@ -196,7 +196,7 @@ export class AppService {
     result: Record<string, boolean>,
     flag: FeatureFlag,
     installationId: string,
-    userId?: string
+    userId: string
   ) {
     userId = this._installations.find(i => i.id === installationId)?.user || userId
 
@@ -268,7 +268,7 @@ export class AppService {
           await this.handleCongregationFlag(result, flag, installationId, userId);
           break;
         case 'user':
-          await this.handleUserFlag(result, flag, installationId, userId);
+          await this.handleUserFlag(result, flag, installationId, userId!);
           break;
       }
     }
