@@ -7,7 +7,7 @@ vi.mock('../../src/utils/logger.js');
 
 vi.mock('../../src/services/index.js', () => ({
   appService: {
-    isReady: true, // This is the key to bypassing the readinessGuard
+    isReady: true,
     installations: [],
     flags: [],
     evaluateFeatureFlags: vi.fn().mockResolvedValue({ FLAG: true }),
@@ -59,7 +59,7 @@ describe('Public Endpoints', () => {
   });
 
   describe('GET /api/v4/public/feature-flags', () => {
-    it('should return 200 OK with an empty object for a valid request', async () => {
+    it('should return 200 OK with the correct flag value for a valid request', async () => {
       const response = await request
         .get('/api/v4/public/feature-flags')
         .set('installation', 'test-installation-id');
