@@ -4,5 +4,6 @@ export * from './i18n.service.js';
 export * from './s3.service.js';
 export * from './scheduler.service.js';
 export * from './seeder.service.js';
+export * from './socket.service.js'
 export * from './storage-init.service.js';
 export * from './user_registry.service.js';

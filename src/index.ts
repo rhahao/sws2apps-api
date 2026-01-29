@@ -1,18 +1,27 @@
 import dotenv from 'dotenv';
+import http from 'node:http';
 import { logger } from './utils/index.js';
-import { initializeStorage, initI18n, appService } from './services/index.js';
-import { initializeFirebaseAdmin } from './config/index.js'; // New import
+import {
+  initializeStorage,
+  initI18n,
+  appService,
+  initSocketIO,
+} from './services/index.js';
+import { initializeFirebaseAdmin } from './config/index.js';
 import app from './app.js';
 
 // Load environment variables
 dotenv.config();
 
-// Initialize logger with config - NO LONGER NEEDED as logger initializes directly
-
 const PORT = process.env.PORT || 8000;
 
+const server = http.createServer(app);
+
+// Initialize Socket.IO
+const io = initSocketIO(server);
+
 // Start server immediately (Non-blocking)
-app.listen(PORT, async () => {
+server.listen(PORT, async () => {
   logger.info(`🚀 Server is running on port ${PORT}`);
 
   try {
@@ -24,6 +33,8 @@ app.listen(PORT, async () => {
 
     // 3. Perform background storage initialization
     await initializeStorage();
+
+    app.set('io', io);
 
     appService.isReady = true;
     logger.info('System initialized and ready to serve traffic');

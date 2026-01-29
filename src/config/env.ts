@@ -9,7 +9,7 @@ export const ENV = {
   logtailSourceToken: process.env.LOGTAIL_SOURCE_TOKEN,
   logtailEndpoint:
     process.env.LOGTAIL_ENDPOINT || 'https://in.logs.betterstack.com',
-  secEncryptKey: process.env.SEC_ENCRYPT_KEY,
+  secEncryptKey: process.env.SEC_ENCRYPT_KEY!,
   S3: {
     region: process.env.S3_REGION || 'us-east-1',
     accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
