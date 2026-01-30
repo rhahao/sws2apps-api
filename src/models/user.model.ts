@@ -27,7 +27,7 @@ export class User {
   private _auth_provider?: string;
   private _profile = {} as UserProfile;
   private _sessions: UserSession[] = [];
-  private _settings?: UserSettings;
+  private _settings = {} as UserSettings;
   private _ETag: string = 'v0';
 
   constructor(id: string) {
