@@ -1,10 +1,11 @@
-import { getAuth } from 'firebase-admin/auth';
-import { encryptData, logger } from '../utils/index.js';
+import { FirebaseAuthError, getAuth } from 'firebase-admin/auth';
+import randomstring from 'randomstring';
+import { decryptData, encryptData, logger } from '../utils/index.js';
 import { User } from '../models/index.js';
 import { s3Service } from './s3.service.js';
-import { AppRoleType } from '../types/index.js';
+import { AppRoleType, GenericObject } from '../types/index.js';
 
-class UserRegistry {
+export class UserRegistry {
   private users: Map<string, User> = new Map();
   private visitorIndex: Map<string, string> = new Map();
 
@@ -302,10 +303,132 @@ class UserRegistry {
       logger.info(
         `Pocket user created: ${userId} for congregation: ${cong_id}`
       );
-			
+
       return newUser;
     } catch (error) {
       logger.error(`Failed to create pocket user:`, error);
+      throw error;
+    }
+  }
+
+  public generateAuthLink(params: { email: string; origin: string }) {
+    const { email, origin } = params;
+
+    try {
+      const user = this.findByEmail(email);
+
+      const claims: GenericObject = {
+        email,
+      };
+
+      if (user) {
+        claims.uid = user.profile.auth_uid;
+      }
+
+      const emailOTP = randomstring.generate({ length: 6, charset: 'numeric' });
+      const expires = Date.now() + 5 * 60 * 1000;
+
+      // Does NOT allow magic login. Requires 'c' (code) to be provided by user.
+      const browserHandshake = encryptData(
+        JSON.stringify({
+          e: email,
+          c: emailOTP,
+          x: expires,
+          isMagic: false,
+        })
+      );
+
+      // Contains the same data but 'isMagic' is true.
+      const emailHandshake = encryptData(
+        JSON.stringify({
+          e: email,
+          c: emailOTP,
+          x: expires,
+          isMagic: true,
+        })
+      );
+
+      const browserLink = `${origin}/#/?handshake=${encodeURIComponent(
+        browserHandshake
+      )}`;
+
+      const emailLink = `${origin}/#/?handshake=${encodeURIComponent(
+        emailHandshake
+      )}`;
+
+      return { browserLink, emailLink, otp: emailOTP };
+    } catch (error) {
+      logger.error(`Failed to generate auth link:`, error);
+      throw error;
+    }
+  }
+
+  public async verifyAndCreate(params: { handshake: string; otp?: string }) {
+    const { handshake, otp } = params;
+
+    try {
+      // 1. Decrypt the handshake
+      const decrypted = decryptData(handshake);
+
+      if (!decrypted) throw new Error('api.auth.invalid_handshake');
+
+      const {
+        e: email,
+        c: correctCode,
+        x: expires,
+        isMagic,
+      } = JSON.parse(decrypted);
+
+      // 1. Validate Expiry
+      if (Date.now() > expires) throw new Error('api.auth.otp_expired');
+
+      // 2. Dual-Path Verification
+      // If not a magic link, we MUST validate the OTP
+      if (!isMagic) {
+        if (!otp || otp !== correctCode) {
+          throw new Error('api.auth.invalid_otp');
+        }
+      }
+
+      // 3. The Commit Moment
+      const auth = getAuth();
+
+      let authUid: string;
+
+      try {
+        const userRecord = await auth.getUserByEmail(email);
+        authUid = userRecord.uid;
+      } catch (error) {
+        if (
+          error instanceof FirebaseAuthError &&
+          error.code === 'auth/user-not-found'
+        ) {
+          const newUser = await auth.createUser({ email });
+          authUid = newUser.uid;
+        } else {
+          throw error;
+        }
+      }
+
+      // 4. Create S3 Record
+      let user = this.findByEmail(email);
+
+      if (!user) {
+        user = await this.create({
+          auth_uid: authUid,
+          firstname: '',
+          lastname: '',
+          email,
+        });
+      }
+
+      // 5. Generate the actual login token
+      const loginToken = await auth.createCustomToken(authUid);
+
+      return { token: loginToken, user };
+    } catch (error) {
+      logger.error(`Failed to verify and create user:`, error);
+
       throw error;
     }
   }

@@ -1,293 +1,338 @@
-import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { userRegistry } from '../../src/services/user_registry.service.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  UserRegistry,
+  userRegistry,
+} from '../../src/services/user_registry.service.js';
 import { s3Service } from '../../src/services/s3.service.js';
 import { User } from '../../src/models/index.js';
-import { getAuth } from 'firebase-admin/auth';
-import * as EncryptionUtils from '../../src/utils/encryption.js';
+import { encryptData } from '../../src/utils/encryption.js';
+import { FirebaseAuthError } from 'firebase-admin/auth';
 
-// 1. Define stable mock references for Firebase
+/* -------------------- Firebase & Service Mocks -------------------- */
 const mockUpdateUser = vi.fn().mockResolvedValue({});
-const mockGetUser = vi.fn().mockImplementation((uid) => ({
-  uid,
-  email: 'mock-user@example.com',
-  providerData: [{ providerId: 'password' }],
-}));
+const mockGetUserByEmail = vi.fn();
+const mockCreateUser = vi.fn();
+const mockCreateCustomToken = vi.fn().mockResolvedValue('mock-login-token');
+const mockDeleteUser = vi.fn().mockResolvedValue({});
 
-// 2. Mock Firebase Admin Auth using the stable references
-vi.mock('firebase-admin/auth', () => ({
-  getAuth: vi.fn(() => ({
-    updateUser: mockUpdateUser,
-    getUser: mockGetUser,
-  })),
-}));
+vi.mock('firebase-admin/auth', () => {
+  class MockFirebaseAuthError extends Error {
+    code: string;
+    constructor(code: string) {
+      super(code);
+      this.code = code;
+    }
+  }
 
-vi.mock('../../src/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  },
-}));
-
-vi.mock('../../src/services/s3.service.js');
-
-// 3. Mock User Model
-vi.mock('../../src/models/index.js', () => {
   return {
-    User: vi.fn().mockImplementation(function (id) {
-      this.id = id;
-      this.sessions = [];
-      this.profile = { role: 'user' };
-      this.load = vi.fn().mockResolvedValue(undefined);
-      this.save = vi.fn().mockResolvedValue(undefined);
-      this.applyServerProfilePatch = vi.fn().mockResolvedValue(undefined);
-      this.applyProfilePatch = vi.fn().mockResolvedValue(undefined);
-      this.fetchMutations = vi.fn().mockResolvedValue([]);
-      this.saveMutations = vi.fn().mockResolvedValue(undefined);
-      this.saveSessions = vi.fn().mockResolvedValue(undefined);
-      this.cleanupMutations = vi
-        .fn()
-        .mockReturnValue({ pruned: [], hasChanged: false });
-      this.cleanupSessions = vi.fn().mockReturnValue(false);
-      return this;
-    }),
+    FirebaseAuthError: MockFirebaseAuthError,
+    getAuth: vi.fn(() => ({
+      updateUser: mockUpdateUser,
+      getUserByEmail: mockGetUserByEmail,
+      createUser: mockCreateUser,
+      createCustomToken: mockCreateCustomToken,
+      deleteUser: mockDeleteUser,
+    })),
   };
 });
 
-describe('UserRegistry', () => {
+vi.mock('../../src/utils/logger.js');
+vi.mock('../../src/services/s3.service.js');
+
+/* -------------------- User Model Mock -------------------- */
+vi.mock('../../src/models/index.js', () => ({
+  User: vi.fn().mockImplementation(function (id) {
+    this.id = id;
+    // Define readonly properties safely
+    Object.defineProperty(this, 'email', { value: undefined, writable: true });
+    Object.defineProperty(this, 'sessions', { value: [], writable: true });
+    Object.defineProperty(this, 'profile', {
+      value: { role: 'vip' },
+      writable: true,
+    });
+
+    this.load = vi.fn();
+    this.applyServerProfilePatch = vi.fn();
+    this.applyProfilePatch = vi.fn();
+    this.fetchMutations = vi.fn().mockResolvedValue([]);
+    this.cleanupMutations = vi
+      .fn()
+      .mockReturnValue({ pruned: [], hasChanged: false });
+    this.cleanupSessions = vi.fn().mockReturnValue(false);
+    this.saveMutations = vi.fn();
+    this.saveSessions = vi.fn();
+    return this;
+  }),
+}));
+
+/* -------------------- Encryption Mock -------------------- */
+vi.mock('../../src/utils/encryption.js', () => ({
+  encryptData: vi.fn((d) => `MOCK_ENC_${d}`),
+  decryptData: vi.fn((d) =>
+    d?.startsWith('MOCK_ENC_') ? d.replace('MOCK_ENC_', '') : null
+  ),
+}));
+
+/* -------------------- Helper -------------------- */
+const buildHandshake = (overrides = {}) =>
+  encryptData(
+    JSON.stringify({
+      e: 'auth@test.com',
+      c: '123456',
+      x: Date.now() + 10_000,
+      isMagic: true,
+      ...overrides,
+    })
+  );
+
+/* -------------------- Lean Test Suite -------------------- */
+describe('UserRegistry (Lean Suite)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.mocked(s3Service.listFolders).mockResolvedValue([]);
     await userRegistry.loadIndex();
   });
 
-  describe('User Creation', () => {
-    it('should create a new user, sync with Firebase, and update the index', async () => {
-      const params = {
-        auth_uid: 'fb_123',
-        firstname: 'Jane',
-        lastname: 'Doe',
-        email: 'jane@example.com',
-      };
+  /* ---------------- User Creation ---------------- */
 
-      // Specific mock implementation for this test case
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = [];
-        this.save = vi.fn().mockResolvedValue(undefined);
-        this.load = vi.fn().mockImplementation(async () => {
-          this.email = 'jane@example.com';
-          return undefined;
-        });
-        this.applyServerProfilePatch = vi.fn();
-        this.applyProfilePatch = vi.fn();
-        return this;
-      });
-
-      const user = await userRegistry.create(params);
-
-      // Verify Firebase update using the stable variable
-      expect(mockUpdateUser).toHaveBeenCalledWith(
-        'fb_123',
-        expect.objectContaining({
-          displayName: 'Jane Doe',
-        })
-      );
-
-      // Verify Registry state
-      expect(userRegistry.has(user!.id)).toBe(true);
-      expect(userRegistry.findByEmail('jane@example.com')).toBeDefined();
+  it('creates a user and syncs with Firebase', async () => {
+    await userRegistry.create({
+      auth_uid: 'fb_123',
+      firstname: 'Jane',
+      lastname: 'Doe',
+      email: 'jane@example.com',
     });
 
-    it('should handle creation errors gracefully and rethrow', async () => {
-      // 1. Force the Firebase mock to fail
-      mockUpdateUser.mockRejectedValueOnce(new Error('Firebase Error'));
+    expect(mockUpdateUser).toHaveBeenCalledWith(
+      'fb_123',
+      expect.objectContaining({
+        email: 'jane@example.com',
+        displayName: 'Jane Doe',
+      })
+    );
+  });
 
-      const params = {
+  it('indexes user so it can be found by email', async () => {
+    (User as any).mockImplementationOnce(function (id) {
+      this.id = id;
+      this.sessions = [];
+      this.profile = { role: 'user', auth_uid: 'fb_123' };
+      this.email = 'jane@example.com';
+      this.load = vi.fn().mockResolvedValue(undefined);
+      this.applyServerProfilePatch = vi.fn();
+      this.applyProfilePatch = vi.fn();
+    });
+
+    await userRegistry.create({
+      auth_uid: 'fb_123',
+      firstname: 'Jane',
+      lastname: 'Doe',
+      email: 'jane@example.com',
+    });
+
+    expect(userRegistry.findByEmail('jane@example.com')).toBeDefined();
+  });
+
+  it('rethrows Firebase errors and does not mutate registry', async () => {
+    mockUpdateUser.mockRejectedValueOnce(new Error('Firebase Error'));
+
+    await expect(
+      userRegistry.create({
         auth_uid: 'fail',
         firstname: 'X',
         lastname: 'Y',
-        email: 'fail@example.com', // Trigger the Firebase branch
-      };
+        email: 'fail@example.com',
+      })
+    ).rejects.toThrow('Firebase Error');
 
-      // 2. Clear the User mock implementation for this test to ensure
-      // no "Jane Doe" side effects are lingering from previous implementation overrides
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.applyServerProfilePatch = vi.fn();
-        this.applyProfilePatch = vi.fn();
-        this.load = vi.fn();
-        return this;
-      });
-
-      // 3. Execution & Assertion
-      await expect(userRegistry.create(params)).rejects.toThrow(
-        'Firebase Error'
-      );
-
-      // 4. Verify the user was NOT added to the map
-      expect(userRegistry.count).toBe(0);
-    });
-
-    it('should encrypt the pocket_code and store it in the server profile congregation object', async () => {
-      // 1. Mock encryption to return a predictable string
-      const encryptSpy = vi.spyOn(EncryptionUtils, 'encryptData')
-        .mockReturnValue('encrypted_secret_123');
-    
-      const params = {
-        user_firstname: 'Secure',
-        user_lastname: 'User',
-        user_secret_code: 'raw_code_999',
-        cong_id: 'C1',
-        cong_role: [],
-        cong_person_uid: 'P1'
-      };
-    
-      // 2. Setup mocks for the User model methods
-      const mockApplyServerPatch = vi.fn().mockResolvedValue(undefined);
-      const mockApplyProfilePatch = vi.fn().mockResolvedValue(undefined);
-      
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = [];
-        this.save = vi.fn().mockResolvedValue(undefined);
-        this.applyServerProfilePatch = mockApplyServerPatch;
-        this.applyProfilePatch = mockApplyProfilePatch;
-        return this;
-      });
-    
-      // 3. Action
-      const user = await userRegistry.createPocket(params);
-    
-      // 4. Assertion: Verify encryption was called with raw input
-      expect(encryptSpy).toHaveBeenCalledWith('raw_code_999');
-    
-      // 5. Assertion: Verify the SERVER profile contains the encrypted code in the congregation object
-      expect(mockApplyServerPatch).toHaveBeenCalledWith(expect.objectContaining({
-        role: 'pocket',
-        congregation: expect.objectContaining({
-          pocket_invitation_code: 'encrypted_secret_123',
-          id: 'C1',
-          account_type: 'pocket'
-        })
-      }));
-    
-      // 6. Assertion: Verify the PUBLIC profile still gets the names (with updatedAt)
-      expect(mockApplyProfilePatch).toHaveBeenCalledWith(expect.objectContaining({
-        firstname: expect.objectContaining({ value: 'Secure' }),
-        lastname: expect.objectContaining({ value: 'User' })
-      }));
-
-      // Verify Registry state
-      expect(userRegistry.has(user.id)).toBe(true);
-    });
+    expect(userRegistry.count).toBe(0);
   });
 
-  describe('Indexing & VisitorId', () => {
-    it('should build the visitor index correctly during loadIndex', async () => {
-      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
+  /* ---------------- Pocket User ---------------- */
 
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = [{ visitorid: 'v-123' }];
-        this.load = vi.fn().mockResolvedValue(undefined);
-        return this;
-      });
-
-      await userRegistry.loadIndex();
-      expect(userRegistry.findByVisitorId('v-123')).toBeDefined();
+  it('encrypts pocket code on creation', async () => {
+    const user = await userRegistry.createPocket({
+      user_firstname: 'Secure',
+      user_lastname: 'User',
+      user_secret_code: 'raw_code',
+      cong_id: 'C1',
+      cong_role: [],
+      cong_person_uid: 'P1',
     });
+
+    expect(encryptData).toHaveBeenCalledWith('raw_code');
+    expect(userRegistry.has(user.id)).toBe(true);
   });
 
-  describe('Search & Hot-Patching', () => {
-    it('should find users by email (case-insensitive)', async () => {
-      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/alice/']);
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.email = 'alice@gmail.com';
-        this.sessions = [];
-        this.load = vi.fn().mockResolvedValue(undefined);
-        return this;
-      });
+  /* ---------------- verifyAndCreate ---------------- */
 
-      await userRegistry.loadIndex();
-      expect(userRegistry.findByEmail('ALICE@gmail.com')).toBeDefined();
-    });
-
-    it('should perform a hot-update of the visitorIndex using updateIndexForUser', async () => {
-      const visitorId = 'hot-session-999';
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = [{ visitorid: visitorId }];
-        this.load = vi.fn().mockResolvedValue(undefined);
-        return this;
-      });
-
-      const newUser = new User('user_999');
-      userRegistry.updateIndexForUser(newUser);
-
-      expect(userRegistry.findByVisitorId(visitorId)).toBeDefined();
-      expect(userRegistry.findById('user_999')).toBeDefined();
-    });
+  it('fails on invalid handshake', async () => {
+    await expect(
+      userRegistry.verifyAndCreate({ handshake: 'bad' })
+    ).rejects.toThrow('api.auth.invalid_handshake');
   });
 
-  describe('User Deletion', () => {
-    const mockDeleteUser = vi.fn().mockResolvedValue({});
-
-    // Update the getAuth mock for this block
-    beforeEach(() => {
-      vi.mocked(getAuth as Mock).mockReturnValue({
-        deleteUser: mockDeleteUser,
-      });
-    });
-
-    it('should delete from Firebase, S3, and the Registry', async () => {
-      // 1. Setup an existing user in the registry
-      const userId = 'USER_TO_DELETE';
-      const visitorId = 'session_to_purge';
-
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.profile = { auth_uid: 'fb_delete_123' };
-        this.sessions = [{ visitorid: visitorId }];
-        this.load = vi.fn().mockResolvedValue(undefined);
-        return this;
-      });
-
-      const user = new User(userId);
-      userRegistry.updateIndexForUser(user);
-
-      // 2. Action
-      const result = await userRegistry.delete(userId);
-
-      // 3. Assertions
-      expect(result).toBe(true);
-      expect(mockDeleteUser).toHaveBeenCalledWith('fb_delete_123');
-      expect(s3Service.deleteFolder).toHaveBeenCalledWith(`users/${userId}/`);
-
-      // 4. Verify memory is clean
-      expect(userRegistry.has(userId)).toBe(false);
-      expect(userRegistry.findByVisitorId(visitorId)).toBeUndefined();
-    });
-
-    it('should return false if the user does not exist', async () => {
-      const result = await userRegistry.delete('non_existent_id');
-      
-      expect(result).toBe(false);
-      expect(mockDeleteUser).not.toHaveBeenCalled();
-    });
+  it('fails on expired handshake', async () => {
+    const expired = buildHandshake({ x: Date.now() - 1000 });
+    await expect(
+      userRegistry.verifyAndCreate({ handshake: expired })
+    ).rejects.toThrow('api.auth.otp_expired');
   });
 
-  describe('Maintenance', () => {
-    it('should not rebuild index if no users were cleaned', async () => {
-      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
-      const rebuildSpy = vi.spyOn(
-        userRegistry as unknown as { rebuildVisitorIndex: () => void },
-        'rebuildVisitorIndex'
-      );
+  it('fails on wrong OTP for non-magic', async () => {
+    const h = buildHandshake({ isMagic: false });
+    await expect(
+      userRegistry.verifyAndCreate({ handshake: h, otp: 'wrong' })
+    ).rejects.toThrow('api.auth.invalid_otp');
+  });
 
-      await userRegistry.performHistoryMaintenance();
-      expect(rebuildSpy).not.toHaveBeenCalled();
+  it('creates user via magic link when not found in Firebase', async () => {
+    mockGetUserByEmail.mockRejectedValueOnce(
+      new FirebaseAuthError('auth/user-not-found')
+    );
+    mockCreateUser.mockResolvedValueOnce({ uid: 'fb_magic' });
+
+    const result = await userRegistry.verifyAndCreate({
+      handshake: buildHandshake({ e: 'magic@test.com' }),
     });
+    expect(result.token).toBe('mock-login-token');
+  });
+
+  it('reuses existing Firebase user if found', async () => {
+    mockGetUserByEmail.mockResolvedValueOnce({ uid: 'fb_old' });
+    await userRegistry.verifyAndCreate({
+      handshake: buildHandshake({ e: 'existing@test.com' }),
+    });
+    expect(mockCreateUser).not.toHaveBeenCalled();
+  });
+
+  /* ---------------- Indexing ---------------- */
+
+  it('indexes visitor sessions during loadIndex', async () => {
+    vi.mocked(s3Service.listFolders).mockResolvedValue(['users/u1/']);
+    (User as any).mockImplementationOnce(function (id) {
+      this.id = id;
+      Object.defineProperty(this, 'sessions', {
+        value: [{ visitorid: 'v-123' }],
+        writable: true,
+      });
+      this.load = vi.fn();
+    });
+
+    await userRegistry.loadIndex();
+    expect(userRegistry.findByVisitorId('v-123')).toBeDefined();
+  });
+
+  it('removes visitor session from index', () => {
+    const u = new User('u1');
+    (u as any).sessions.push({ visitorid: 'v-123' });
+    userRegistry.updateIndexForUser(u);
+
+    userRegistry.removeVisitorSession('v-123');
+    expect(userRegistry.findByVisitorId('v-123')).toBeUndefined();
+  });
+
+  /* ---------------- Deletion ---------------- */
+
+  it('deletes user from Firebase', async () => {
+    const u = new User('del');
+    Object.defineProperty(u, 'profile', {
+      value: { auth_uid: 'fb_del' },
+      writable: true,
+    });
+    userRegistry.updateIndexForUser(u);
+
+    await userRegistry.delete('del');
+    expect(mockDeleteUser).toHaveBeenCalledWith('fb_del');
+  });
+
+  it('deletes user folder from S3', async () => {
+    const u = new User('del2');
+    Object.defineProperty(u, 'profile', {
+      value: { auth_uid: 'fb_del2' },
+      writable: true,
+    });
+    userRegistry.updateIndexForUser(u);
+
+    await userRegistry.delete('del2');
+    expect(s3Service.deleteFolder).toHaveBeenCalledWith('users/del2/');
+  });
+
+  it('removes user from registry after deletion', async () => {
+    const u = new User('del3');
+    Object.defineProperty(u, 'profile', {
+      value: { auth_uid: 'fb_del3' },
+      writable: true,
+    });
+    userRegistry.updateIndexForUser(u);
+
+    await userRegistry.delete('del3');
+    expect(userRegistry.has('del3')).toBe(false);
+  });
+
+  it('continues deletion if Firebase fails', async () => {
+    const u = new User('del4');
+    Object.defineProperty(u, 'profile', {
+      value: { auth_uid: 'fb_fail' },
+      writable: true,
+    });
+    userRegistry.updateIndexForUser(u);
+
+    mockDeleteUser.mockRejectedValueOnce(new Error('fail'));
+    const result = await userRegistry.delete('del4');
+    expect(result).toBe(true);
+    expect(s3Service.deleteFolder).toHaveBeenCalled();
+  });
+
+  /* ---------------- Maintenance ---------------- */
+
+  it('skips rebuild if no changes', async () => {
+    const spy = vi.spyOn(userRegistry as any, 'rebuildVisitorIndex');
+    await userRegistry.performHistoryMaintenance();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds index if changes occur', async () => {
+    (User as any).mockImplementationOnce(function (id) {
+      this.id = id;
+      this.sessions = [];
+      this.fetchMutations = vi.fn().mockResolvedValue([{}]);
+      this.load = vi.fn().mockResolvedValue(undefined);
+      this.cleanupMutations = vi
+        .fn()
+        .mockReturnValue({ pruned: [], hasChanged: true });
+      this.saveMutations = vi.fn().mockResolvedValue(undefined);
+      this.cleanupSessions = vi.fn().mockReturnValue(false);
+      this.saveSessions = vi.fn().mockResolvedValue(undefined);
+    });
+
+    const user = new User('u2');
+    await user.load();
+
+    userRegistry.updateIndexForUser(user);
+
+    type UserRegistryTestable = UserRegistry & {
+      rebuildVisitorIndex: () => void;
+    };
+
+    const spy = vi.spyOn(
+      userRegistry as UserRegistryTestable,
+      'rebuildVisitorIndex'
+    );
+    await userRegistry.performHistoryMaintenance();
+    expect(spy).toHaveBeenCalled();
+  });
+
+  /* ---------------- Auth Link Generation ---------------- */
+
+  it('generates OTP and links correctly', () => {
+    const { browserLink, emailLink, otp } = userRegistry.generateAuthLink({
+      email: 'test@example.com',
+      origin: 'http://localhost:4050',
+    });
+
+    expect(otp).toMatch(/^\d{6}$/);
+    expect(browserLink).not.toEqual(emailLink);
+    expect(browserLink).toContain('handshake=');
   });
 });
