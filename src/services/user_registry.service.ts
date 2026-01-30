@@ -1,6 +1,7 @@
 import { logger } from '../utils/index.js';
 import { User } from '../models/index.js';
 import { s3Service } from './s3.service.js';
+import { getAuth } from 'firebase-admin/auth';
 
 class UserRegistry {
   private users: Map<string, User> = new Map();
@@ -107,8 +108,8 @@ class UserRegistry {
   }
 
   public updateIndexForUser(user: User) {
-		this.users.set(user.id, user);
-		
+    this.users.set(user.id, user);
+
     this.indexUserSessions(user);
   }
 
@@ -160,6 +161,59 @@ class UserRegistry {
     logger.info(
       `History maintenance completed. Cleaned ${usersCleaned} users.`
     );
+  }
+
+  public async create(params: {
+    auth_uid: string;
+    firstname: string;
+    lastname: string;
+    email?: string;
+  }) {
+    try {
+      const { auth_uid, firstname, lastname, email } = params;
+
+      if (email) {
+        let displayName = firstname;
+
+        if (lastname) {
+          if (!displayName) {
+            displayName = lastname;
+          } else {
+            displayName += ` ${lastname}`;
+          }
+        }
+
+        await getAuth().updateUser(auth_uid, {
+          email: email,
+          displayName: displayName,
+        });
+      }
+
+      const userId = crypto.randomUUID().toUpperCase();
+
+      const newUser = new User(userId);
+
+      await newUser.applyServerProfilePatch({
+        auth_uid,
+        createdAt: new Date().toISOString(),
+        role: 'vip',
+      });
+
+      await newUser.applyProfilePatch({
+        firstname: { value: firstname, updatedAt: new Date().toISOString() },
+        lastname: { value: lastname, updatedAt: new Date().toISOString() },
+      });
+
+      await newUser.load();
+
+      this.updateIndexForUser(newUser);
+
+      return newUser;
+    } catch (error) {
+      logger.error(`Failed to create user ${params.auth_uid}:`, error);
+
+      throw error;
+    }
   }
 }
 

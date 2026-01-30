@@ -1,3 +1,4 @@
+import { getAuth } from 'firebase-admin/auth';
 import {
   UserChange,
   UserFieldServiceReport,
@@ -24,8 +25,8 @@ export class User {
   private _id: string;
   private _email?: string;
   private _auth_provider?: string;
-  private _profile?: UserProfile;
-  private _sessions: UserSession[] = []
+  private _profile = {} as UserProfile;
+  private _sessions: UserSession[] = [];
   private _settings?: UserSettings;
   private _ETag: string = 'v0';
 
@@ -321,13 +322,14 @@ export class User {
         }
       };
 
-      const [profileData, settingsData, sessionsData, etag] =
-        await Promise.all([
+      const [profileData, settingsData, sessionsData, etag] = await Promise.all(
+        [
           fetchFile('profile.json'),
           fetchFile('settings.json'),
           fetchFile('sessions.json'),
           this.getStoredEtag(),
-        ]);
+        ]
+      );
 
       if (profileData) {
         this._profile = profileData;
@@ -342,6 +344,17 @@ export class User {
       }
 
       this._ETag = etag;
+
+      // fetch firebase details
+      if (this._profile.auth_uid) {
+        const userRecord = await getAuth().getUser(this._profile.auth_uid);
+
+        if (userRecord) {
+          const providerId = userRecord.providerData[0]?.providerId;
+          this._email = userRecord.email;
+          this._auth_provider = providerId || 'email';
+        }
+      }
     } catch (error) {
       logger.error(`Error loading user ${this._id}:`, error);
     }

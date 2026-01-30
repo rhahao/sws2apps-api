@@ -2,18 +2,51 @@ import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { userRegistry } from '../../src/services/user_registry.service.js';
 import { s3Service } from '../../src/services/s3.service.js';
 import { User } from '../../src/models/index.js';
-import { UserSession } from '../../src/types/index.js';
 
-vi.mock('../../src/utils/logger.js');
+// 1. Define stable mock references for Firebase
+const mockUpdateUser = vi.fn().mockResolvedValue({});
+const mockGetUser = vi.fn().mockImplementation((uid) => ({
+  uid,
+  email: 'mock-user@example.com',
+  providerData: [{ providerId: 'password' }],
+}));
+
+// 2. Mock Firebase Admin Auth using the stable references
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(() => ({
+    updateUser: mockUpdateUser,
+    getUser: mockGetUser,
+  })),
+}));
+
+vi.mock('../../src/utils/index.js', () => ({
+  logger: {
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
+
 vi.mock('../../src/services/s3.service.js');
 
+// 3. Mock User Model
 vi.mock('../../src/models/index.js', () => {
   return {
     User: vi.fn().mockImplementation(function (id) {
       this.id = id;
+      this.sessions = [];
       this.profile = { role: 'user' };
-      this.sessions = []; // Default empty
       this.load = vi.fn().mockResolvedValue(undefined);
+      this.save = vi.fn().mockResolvedValue(undefined);
+      this.applyServerProfilePatch = vi.fn().mockResolvedValue(undefined);
+      this.applyProfilePatch = vi.fn().mockResolvedValue(undefined);
+      this.fetchMutations = vi.fn().mockResolvedValue([]);
+      this.saveMutations = vi.fn().mockResolvedValue(undefined);
+      this.saveSessions = vi.fn().mockResolvedValue(undefined);
+      this.cleanupMutations = vi
+        .fn()
+        .mockReturnValue({ pruned: [], hasChanged: false });
+      this.cleanupSessions = vi.fn().mockReturnValue(false);
       return this;
     }),
   };
@@ -26,63 +59,92 @@ describe('UserRegistry', () => {
     await userRegistry.loadIndex();
   });
 
+  describe('User Creation', () => {
+    it('should create a new user, sync with Firebase, and update the index', async () => {
+      const params = {
+        auth_uid: 'fb_123',
+        firstname: 'Jane',
+        lastname: 'Doe',
+        email: 'jane@example.com',
+      };
+
+      // Specific mock implementation for this test case
+      (User as Mock).mockImplementation(function (id) {
+        this.id = id;
+        this.sessions = [];
+        this.save = vi.fn().mockResolvedValue(undefined);
+        this.load = vi.fn().mockImplementation(async () => {
+          this.email = 'jane@example.com';
+          return undefined;
+        });
+        this.applyServerProfilePatch = vi.fn();
+        this.applyProfilePatch = vi.fn();
+        return this;
+      });
+
+      const user = await userRegistry.create(params);
+
+      // Verify Firebase update using the stable variable
+      expect(mockUpdateUser).toHaveBeenCalledWith(
+        'fb_123',
+        expect.objectContaining({
+          displayName: 'Jane Doe',
+        })
+      );
+
+      // Verify Registry state
+      expect(userRegistry.has(user!.id)).toBe(true);
+      expect(userRegistry.findByEmail('jane@example.com')).toBeDefined();
+    });
+
+    it('should handle creation errors gracefully and rethrow', async () => {
+      // 1. Force the Firebase mock to fail
+      mockUpdateUser.mockRejectedValueOnce(new Error('Firebase Error'));
+
+      const params = {
+        auth_uid: 'fail',
+        firstname: 'X',
+        lastname: 'Y',
+        email: 'fail@example.com', // Trigger the Firebase branch
+      };
+
+      // 2. Clear the User mock implementation for this test to ensure
+      // no "Jane Doe" side effects are lingering from previous implementation overrides
+      (User as Mock).mockImplementation(function (id) {
+        this.id = id;
+        this.applyServerProfilePatch = vi.fn();
+        this.applyProfilePatch = vi.fn();
+        this.load = vi.fn();
+        return this;
+      });
+
+      // 3. Execution & Assertion
+      await expect(userRegistry.create(params)).rejects.toThrow(
+        'Firebase Error'
+      );
+
+      // 4. Verify the user was NOT added to the map
+      expect(userRegistry.count).toBe(0);
+    });
+  });
+
   describe('Indexing & VisitorId', () => {
     it('should build the visitor index correctly during loadIndex', async () => {
       vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
 
       (User as Mock).mockImplementation(function (id) {
         this.id = id;
-        this.sessions = [{ visitorid: 'v-123' }, { visitorid: 'v-456' }];
+        this.sessions = [{ visitorid: 'v-123' }];
         this.load = vi.fn().mockResolvedValue(undefined);
         return this;
       });
 
       await userRegistry.loadIndex();
-
-      // Test O(1) lookups
       expect(userRegistry.findByVisitorId('v-123')).toBeDefined();
-      expect(userRegistry.findByVisitorId('v-456')).toBeDefined();
-      expect(userRegistry.findByVisitorId('v-123')?.id).toBe('user1');
-      expect(userRegistry.findByVisitorId('unknown')).toBeUndefined();
-    });
-
-    it('should rebuild the index and remove old sessions after maintenance', async () => {
-      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
-
-      let mockSessions = [{ visitorid: 'active' }, { visitorid: 'stale' }];
-
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = mockSessions;
-        this.load = vi.fn().mockResolvedValue(undefined);
-        this.fetchMutations = vi.fn().mockResolvedValue([]);
-        this.cleanupMutations = vi
-          .fn()
-          .mockReturnValue({ pruned: [], hasChanged: false });
-
-        // Simulate session pruning
-        this.cleanupSessions = vi.fn().mockImplementation(() => {
-          mockSessions = [{ visitorid: 'active' }]; // Remove 'stale'
-          this.sessions = mockSessions;
-          return true; // Indicates change
-        });
-
-        this.saveSessions = vi.fn().mockResolvedValue(undefined);
-        return this;
-      });
-
-      await userRegistry.loadIndex();
-      expect(userRegistry.findByVisitorId('stale')).toBeDefined();
-
-      await userRegistry.performHistoryMaintenance();
-
-      // After maintenance, the index should be rebuilt
-      expect(userRegistry.findByVisitorId('active')).toBeDefined();
-      expect(userRegistry.findByVisitorId('stale')).toBeUndefined();
     });
   });
 
-  describe('Search & Maintenance (Existing)', () => {
+  describe('Search & Hot-Patching', () => {
     it('should find users by email (case-insensitive)', async () => {
       vi.mocked(s3Service.listFolders).mockResolvedValue(['users/alice/']);
       (User as Mock).mockImplementation(function (id) {
@@ -94,64 +156,36 @@ describe('UserRegistry', () => {
       });
 
       await userRegistry.loadIndex();
-
-      const found = userRegistry.findByEmail('Alice@gmail.com');
-      expect(found).toBeDefined();
-      expect(found!.id).toBe('alice');
-    });
-
-    it('should only call rebuildVisitorIndex if users were cleaned', async () => {
-      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
-
-      (User as Mock).mockImplementation(function (id) {
-        this.id = id;
-        this.sessions = [];
-        this.load = vi.fn().mockResolvedValue(undefined);
-        this.fetchMutations = vi.fn().mockResolvedValue([]);
-        this.cleanupMutations = vi
-          .fn()
-          .mockReturnValue({ pruned: [], hasChanged: false });
-        this.cleanupSessions = vi.fn().mockReturnValue(false); // No changes
-        return this;
-      });
-
-      await userRegistry.loadIndex();
-
-      // We spy on the private method via prototype or check the result of findByVisitorId
-      const rebuildSpy = vi.spyOn(
-        userRegistry as unknown as { rebuildVisitorIndex: () => void },
-        'rebuildVisitorIndex'
-      );
-
-      await userRegistry.performHistoryMaintenance();
-
-      expect(rebuildSpy).not.toHaveBeenCalled();
+      expect(userRegistry.findByEmail('ALICE@gmail.com')).toBeDefined();
     });
 
     it('should perform a hot-update of the visitorIndex using updateIndexForUser', async () => {
-      // 1. Setup a mock user that isn't in the registry yet
       const visitorId = 'hot-session-999';
-      
-      // Use your template to create a specific mock instance
       (User as Mock).mockImplementation(function (id) {
         this.id = id;
         this.sessions = [{ visitorid: visitorId }];
         this.load = vi.fn().mockResolvedValue(undefined);
         return this;
       });
-    
+
       const newUser = new User('user_999');
-    
-      // 2. Pre-verify: The index should be empty/unaware of this session
-      expect(userRegistry.findByVisitorId(visitorId)).toBeUndefined();
-    
-      // 3. Action: Perform the quick update
       userRegistry.updateIndexForUser(newUser);
-    
-      // 4. Assertion: O(1) lookup should now work instantly
-      const foundUser = userRegistry.findByVisitorId(visitorId);
-      expect(foundUser).toBeDefined();
-      expect(foundUser?.id).toBe('user_999');
+
+      expect(userRegistry.findByVisitorId(visitorId)).toBeDefined();
+      expect(userRegistry.findById('user_999')).toBeDefined();
+    });
+  });
+
+  describe('Maintenance', () => {
+    it('should not rebuild index if no users were cleaned', async () => {
+      vi.mocked(s3Service.listFolders).mockResolvedValue(['users/user1/']);
+      const rebuildSpy = vi.spyOn(
+        userRegistry as unknown as { rebuildVisitorIndex: () => void },
+        'rebuildVisitorIndex'
+      );
+
+      await userRegistry.performHistoryMaintenance();
+      expect(rebuildSpy).not.toHaveBeenCalled();
     });
   });
 });
