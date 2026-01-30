@@ -1,0 +1,25 @@
+import { AES, Utf8 } from 'crypto-es';
+import { ENV } from '../config/index.js';
+
+const SERVER_KEY = `&sws2apps_${
+  ENV.secEncryptKey ?? 'server_key_dev'
+}`;
+
+export const encryptData = (data: string, passphrase?: string) => {
+  const key = passphrase || SERVER_KEY;
+
+  const encryptedData = AES.encrypt(data, key).toString();
+  return encryptedData;
+};
+
+export const decryptData = (data: string, passphrase?: string) => {
+  try {
+    const key = passphrase || SERVER_KEY;
+
+    const decryptedData = AES.decrypt(data, key);
+    const str = decryptedData.toString(Utf8);
+    return str;
+  } catch {
+    return;
+  }
+};

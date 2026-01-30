@@ -1,7 +1,8 @@
-import { logger } from '../utils/index.js';
+import { getAuth } from 'firebase-admin/auth';
+import { encryptData, logger } from '../utils/index.js';
 import { User } from '../models/index.js';
 import { s3Service } from './s3.service.js';
-import { FirebaseAuthError, getAuth } from 'firebase-admin/auth';
+import { AppRoleType } from '../types/index.js';
 
 class UserRegistry {
   private users: Map<string, User> = new Map();
@@ -192,16 +193,17 @@ class UserRegistry {
       const userId = crypto.randomUUID().toUpperCase();
 
       const newUser = new User(userId);
+      const now = new Date().toISOString();
 
       await newUser.applyServerProfilePatch({
         auth_uid,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
         role: 'vip',
       });
 
       await newUser.applyProfilePatch({
-        firstname: { value: firstname, updatedAt: new Date().toISOString() },
-        lastname: { value: lastname, updatedAt: new Date().toISOString() },
+        firstname: { value: firstname, updatedAt: now },
+        lastname: { value: lastname, updatedAt: now },
       });
 
       await newUser.load();
@@ -216,9 +218,6 @@ class UserRegistry {
     }
   }
 
-  /**
-   * Deletes a user from Firebase, S3, and the local registry.
-   */
   public async delete(userId: string) {
     try {
       const user = this.users.get(userId);
@@ -235,11 +234,8 @@ class UserRegistry {
         try {
           await getAuth().deleteUser(authUid);
         } catch (authError) {
-          if (authError instanceof FirebaseAuthError) {
-            if (authError.code !== 'auth/user-not-found') {
-              throw authError;
-            }
-          }
+          // just log firebase error but proceed with S3 delete
+          logger.error(`Failed to delete firebase user ${authUid}:`, authError);
         }
       }
 
@@ -255,7 +251,61 @@ class UserRegistry {
       return true;
     } catch (error) {
       logger.error(`Failed to delete user ${userId}:`, error);
+
+      throw error;
+    }
+  }
+
+  public async createPocket(params: {
+    user_firstname: string;
+    user_lastname: string;
+    user_secret_code: string;
+    cong_id: string;
+    cong_role: AppRoleType[];
+    cong_person_uid: string;
+  }) {
+    try {
+      const {
+        user_firstname,
+        user_lastname,
+        user_secret_code,
+        cong_id,
+        cong_role,
+        cong_person_uid,
+      } = params;
+
+      // 1. Generate internal ID and initialize Model
+      const userId = crypto.randomUUID().toUpperCase();
+      const newUser = new User(userId);
+      const now = new Date().toISOString();
+
+      // 2. Apply "Pocket" specific profile patches
+      await newUser.applyServerProfilePatch({
+        role: 'pocket',
+        createdAt: now,
+        congregation: {
+          id: cong_id,
+          pocket_invitation_code: encryptData(user_secret_code),
+          account_type: 'pocket',
+          cong_role,
+          user_local_uid: cong_person_uid,
+        },
+      });
+
+      await newUser.applyProfilePatch({
+        firstname: { value: user_firstname, updatedAt: now },
+        lastname: { value: user_lastname, updatedAt: now },
+      });
+
+      this.updateIndexForUser(newUser);
+
+      logger.info(
+        `Pocket user created: ${userId} for congregation: ${cong_id}`
+      );
 			
+      return newUser;
+    } catch (error) {
+      logger.error(`Failed to create pocket user:`, error);
       throw error;
     }
   }

@@ -3,6 +3,7 @@ import { userRegistry } from '../../src/services/user_registry.service.js';
 import { s3Service } from '../../src/services/s3.service.js';
 import { User } from '../../src/models/index.js';
 import { getAuth } from 'firebase-admin/auth';
+import * as EncryptionUtils from '../../src/utils/encryption.js';
 
 // 1. Define stable mock references for Firebase
 const mockUpdateUser = vi.fn().mockResolvedValue({});
@@ -20,7 +21,7 @@ vi.mock('firebase-admin/auth', () => ({
   })),
 }));
 
-vi.mock('../../src/utils/index.js', () => ({
+vi.mock('../../src/utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -126,6 +127,59 @@ describe('UserRegistry', () => {
 
       // 4. Verify the user was NOT added to the map
       expect(userRegistry.count).toBe(0);
+    });
+
+    it('should encrypt the pocket_code and store it in the server profile congregation object', async () => {
+      // 1. Mock encryption to return a predictable string
+      const encryptSpy = vi.spyOn(EncryptionUtils, 'encryptData')
+        .mockReturnValue('encrypted_secret_123');
+    
+      const params = {
+        user_firstname: 'Secure',
+        user_lastname: 'User',
+        user_secret_code: 'raw_code_999',
+        cong_id: 'C1',
+        cong_role: [],
+        cong_person_uid: 'P1'
+      };
+    
+      // 2. Setup mocks for the User model methods
+      const mockApplyServerPatch = vi.fn().mockResolvedValue(undefined);
+      const mockApplyProfilePatch = vi.fn().mockResolvedValue(undefined);
+      
+      (User as Mock).mockImplementation(function (id) {
+        this.id = id;
+        this.sessions = [];
+        this.save = vi.fn().mockResolvedValue(undefined);
+        this.applyServerProfilePatch = mockApplyServerPatch;
+        this.applyProfilePatch = mockApplyProfilePatch;
+        return this;
+      });
+    
+      // 3. Action
+      const user = await userRegistry.createPocket(params);
+    
+      // 4. Assertion: Verify encryption was called with raw input
+      expect(encryptSpy).toHaveBeenCalledWith('raw_code_999');
+    
+      // 5. Assertion: Verify the SERVER profile contains the encrypted code in the congregation object
+      expect(mockApplyServerPatch).toHaveBeenCalledWith(expect.objectContaining({
+        role: 'pocket',
+        congregation: expect.objectContaining({
+          pocket_invitation_code: 'encrypted_secret_123',
+          id: 'C1',
+          account_type: 'pocket'
+        })
+      }));
+    
+      // 6. Assertion: Verify the PUBLIC profile still gets the names (with updatedAt)
+      expect(mockApplyProfilePatch).toHaveBeenCalledWith(expect.objectContaining({
+        firstname: expect.objectContaining({ value: 'Secure' }),
+        lastname: expect.objectContaining({ value: 'User' })
+      }));
+
+      // Verify Registry state
+      expect(userRegistry.has(user.id)).toBe(true);
     });
   });
 

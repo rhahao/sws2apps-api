@@ -6,9 +6,10 @@ export type UserGlobalRoleType = 'vip' | 'pocket' | 'admin';
 export interface UserCongregation {
   id: string;
   cong_role: AppRoleType[];
-  account_type: string;
+  account_type: UserGlobalRoleType;
   user_members_delegate?: string[];
   pocket_invitation_code?: string;
+  user_local_uid?: string;
 }
 
 export interface UserProfileServer {
@@ -27,7 +28,9 @@ export interface UserProfileClientMutable {
   lastname: SyncField;
 }
 
-export interface UserProfile extends UserProfileClientMutable, UserProfileServer {}
+export interface UserProfile
+  extends UserProfileClientMutable,
+    UserProfileServer {}
 
 export type UserProfileClientUpdate = DeepPartial<UserProfileClientMutable>;
 
