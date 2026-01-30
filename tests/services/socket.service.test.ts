@@ -5,7 +5,6 @@ import { Server } from 'socket.io';
 import { io as Client, type Socket as ClientSocket } from 'socket.io-client';
 import cookie from 'cookie';
 import { initSocketIO } from '../../src/services/socket.service.js';
-import { ENV } from '../../src/config/index.js';
 import { GenericObject } from '../../src/types/index.js';
 
 vi.mock('../../src/utils/logger.js');
