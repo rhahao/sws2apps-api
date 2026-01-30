@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { userRegistry } from '../../src/services/user_registry.service.js';
 import { s3Service } from '../../src/services/s3.service.js';
 import { User } from '../../src/models/index.js';
+import { getAuth } from 'firebase-admin/auth';
 
 // 1. Define stable mock references for Firebase
 const mockUpdateUser = vi.fn().mockResolvedValue({});
@@ -173,6 +174,53 @@ describe('UserRegistry', () => {
 
       expect(userRegistry.findByVisitorId(visitorId)).toBeDefined();
       expect(userRegistry.findById('user_999')).toBeDefined();
+    });
+  });
+
+  describe('User Deletion', () => {
+    const mockDeleteUser = vi.fn().mockResolvedValue({});
+
+    // Update the getAuth mock for this block
+    beforeEach(() => {
+      vi.mocked(getAuth as Mock).mockReturnValue({
+        deleteUser: mockDeleteUser,
+      });
+    });
+
+    it('should delete from Firebase, S3, and the Registry', async () => {
+      // 1. Setup an existing user in the registry
+      const userId = 'USER_TO_DELETE';
+      const visitorId = 'session_to_purge';
+
+      (User as Mock).mockImplementation(function (id) {
+        this.id = id;
+        this.profile = { auth_uid: 'fb_delete_123' };
+        this.sessions = [{ visitorid: visitorId }];
+        this.load = vi.fn().mockResolvedValue(undefined);
+        return this;
+      });
+
+      const user = new User(userId);
+      userRegistry.updateIndexForUser(user);
+
+      // 2. Action
+      const result = await userRegistry.delete(userId);
+
+      // 3. Assertions
+      expect(result).toBe(true);
+      expect(mockDeleteUser).toHaveBeenCalledWith('fb_delete_123');
+      expect(s3Service.deleteFolder).toHaveBeenCalledWith(`users/${userId}/`);
+
+      // 4. Verify memory is clean
+      expect(userRegistry.has(userId)).toBe(false);
+      expect(userRegistry.findByVisitorId(visitorId)).toBeUndefined();
+    });
+
+    it('should return false if the user does not exist', async () => {
+      const result = await userRegistry.delete('non_existent_id');
+      
+      expect(result).toBe(false);
+      expect(mockDeleteUser).not.toHaveBeenCalled();
     });
   });
 

@@ -5,6 +5,7 @@ import {
   ListObjectsV2Command,
   HeadObjectCommand,
   CreateBucketCommand,
+  DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GenericError } from '../types/index.js';
@@ -145,6 +146,45 @@ class S3Service {
       logger.info(`File deleted successfully: ${key}`);
     } catch (error) {
       logger.error(`Error deleting file ${key}:`, error);
+      throw error;
+    }
+  }
+
+  async deleteFolder(prefix: string) {
+    try {
+      let isTruncated = true;
+      let continuationToken: string | undefined;
+
+      while (isTruncated) {
+        const listCommand = new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        });
+
+        const listResponse = await s3Client.send(listCommand);
+        const objects = listResponse.Contents;
+
+        if (objects && objects.length > 0) {
+          const deleteParams = {
+            Bucket: this.bucket,
+            Delete: {
+              Objects: objects.map((obj) => ({ Key: obj.Key })),
+              Quiet: true,
+            },
+          };
+
+          const deleteCommand = new DeleteObjectsCommand(deleteParams);
+          await s3Client.send(deleteCommand);
+        }
+
+        isTruncated = !!listResponse.IsTruncated;
+        continuationToken = listResponse.NextContinuationToken;
+      }
+
+      logger.info(`Folder and its contents deleted successfully: ${prefix}`);
+    } catch (error) {
+      logger.error(`Error deleting folder ${prefix}:`, error);
       throw error;
     }
   }

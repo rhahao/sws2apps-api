@@ -1,7 +1,7 @@
 import { logger } from '../utils/index.js';
 import { User } from '../models/index.js';
 import { s3Service } from './s3.service.js';
-import { getAuth } from 'firebase-admin/auth';
+import { FirebaseAuthError, getAuth } from 'firebase-admin/auth';
 
 class UserRegistry {
   private users: Map<string, User> = new Map();
@@ -212,6 +212,50 @@ class UserRegistry {
     } catch (error) {
       logger.error(`Failed to create user ${params.auth_uid}:`, error);
 
+      throw error;
+    }
+  }
+
+  /**
+   * Deletes a user from Firebase, S3, and the local registry.
+   */
+  public async delete(userId: string) {
+    try {
+      const user = this.users.get(userId);
+
+      if (!user) {
+        logger.warn(`Delete failed: User ${userId} not found in registry.`);
+        return false;
+      }
+
+      // 1. Delete from Firebase Auth if auth_uid exists
+      const authUid = user.profile?.auth_uid;
+
+      if (authUid) {
+        try {
+          await getAuth().deleteUser(authUid);
+        } catch (authError) {
+          if (authError instanceof FirebaseAuthError) {
+            if (authError.code !== 'auth/user-not-found') {
+              throw authError;
+            }
+          }
+        }
+      }
+
+      // 2. Delete S3 Folder (users/{userId}/)
+      await s3Service.deleteFolder(`users/${userId}/`);
+
+      // 3. Remove from Registry and rebuild Visitor Index
+      this.users.delete(userId);
+      this.rebuildVisitorIndex();
+
+      logger.info(`User ${userId} deleted successfully from all systems.`);
+
+      return true;
+    } catch (error) {
+      logger.error(`Failed to delete user ${userId}:`, error);
+			
       throw error;
     }
   }
