@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import type { ApiResponse } from '../types/common.types.js';
+import type API from '../types/index.js';
 
 /**
  * Send a successful JSON response
@@ -9,7 +9,7 @@ export const sendSuccess = <T>(
   data: T,
   statusCode: number = 200,
 ): Response => {
-  const response: ApiResponse<T> = {
+  const response: API.ApiResponse<T> = {
     success: true,
     data,
   };
@@ -26,7 +26,7 @@ export const sendError = (
   statusCode: number = 500,
   code: string = 'api.server.internal_error',
 ): Response => {
-  const response: ApiResponse = {
+  const response: API.ApiResponse = {
     success: false,
     error: {
       message,

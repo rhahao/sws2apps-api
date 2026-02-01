@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { appService } from '../services/index.js';
+import Service from '../services/index.js';
 
 /**
  * Middleware that guards API endpoints until the system is fully initialized.
@@ -14,7 +14,7 @@ export const readinessGuard = (
     return next();
   }
 
-  if (!appService.isReady) {
+  if (!Service.API.isReady) {
     res.status(503).json({
       success: false,
       error: {

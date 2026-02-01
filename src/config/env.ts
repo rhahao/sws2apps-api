@@ -1,9 +1,8 @@
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
-export const ENV = {
+export default {
   port: process.env.PORT || 8000,
   nodeEnv: process.env.NODE_ENV || 'development',
   logtailSourceToken: process.env.LOGTAIL_SOURCE_TOKEN,

@@ -1,4 +1,4 @@
-export * from './env.js';
-export * from './firebase.config.js';
-export * from './languages.js';
-export * from './s3.config.js';
+import ENV from './env.js';
+import Languages from './languages.js';
+
+export default { ENV, Languages };

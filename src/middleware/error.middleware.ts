@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
-import { logger } from '../utils/index.js';
+import Utility from '../utils/index.js';
 
 /**
  * Custom error class with machine-readable code
@@ -21,7 +21,7 @@ export class ApiError extends Error {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction): void => {
 	// Log the full error for server-side auditing
-	logger.error('Error occurred:', err);
+	Utility.Logger.error('Error occurred:', err);
 
 	const statusCode = err instanceof ApiError ? err.status : 500;
 	const code = err instanceof ApiError ? err.code : 'api.server.internal_error';

@@ -4,7 +4,7 @@ export interface Language {
   code: string;
 }
 
-export const ALL_LANGUAGES: Language[] = [
+export default [
   { locale: 'de-DE', threeLettersCode: 'deu', code: 'X' },
   { locale: 'en', threeLettersCode: 'eng', code: 'E' },
   { locale: 'mg-MG', threeLettersCode: 'mlg', code: 'MG' },
@@ -13,4 +13,4 @@ export const ALL_LANGUAGES: Language[] = [
   { locale: 'ru-RU', threeLettersCode: 'rus', code: 'U' },
   { locale: 'mg-TTM', threeLettersCode: 'ttm', code: 'TTM' },
   { locale: 'uk-UA', threeLettersCode: 'ukr', code: 'K' },
-];
+] satisfies Language[];

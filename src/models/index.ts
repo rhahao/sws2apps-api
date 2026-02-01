@@ -1,2 +1,3 @@
-export * from './congregation.model.js';
-export * from './user.model.js';
+import * as Model from './export.js';
+
+export default Model;

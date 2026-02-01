@@ -1,11 +1,11 @@
+import { Server, Socket } from 'socket.io';
 import http from 'http';
 import cookie from 'cookie'
 import cookieParser from 'cookie-parser';
-import { Server, Socket } from 'socket.io';
-import { logger } from '../utils/index.js';
-import { ENV } from '../config/index.js';
+import Config from '../config/index.js';
+import Utility from '../utils/index.js';
 
-export const initSocketIO = (server: http.Server) => {
+export const init = (server: http.Server) => {
   const io = new Server(server);
 
   io.use((socket, next) => {
@@ -26,7 +26,7 @@ export const initSocketIO = (server: http.Server) => {
       return next(new Error('api.auth.no_cookies'));
     }
 
-    const unsignedVisitorId = cookieParser.signedCookie(signedVisitorId, ENV.secEncryptKey);
+    const unsignedVisitorId = cookieParser.signedCookie(signedVisitorId, Config.ENV.secEncryptKey);
 
     if (!unsignedVisitorId) {
       return next(new Error('api.auth.invalid_signature'));
@@ -38,17 +38,17 @@ export const initSocketIO = (server: http.Server) => {
   });
 
   io.on('connection', (socket: Socket) => {
-    logger.info('A user connected', socket.id);
+    Utility.Logger.info(`A user connected ${socket.id}`);
 
     // Add your socket event listeners here
     socket.on('my_event', (data) => {
-      logger.info('Received data:', data);
+      Utility.Logger.info('Received data:', data);
       // Broadcast to all clients
       socket.broadcast.emit('event_response', data); 
     });
 
     socket.on('disconnect', () => {
-      logger.info('User disconnected');
+      Utility.Logger.info('User disconnected');
     });
   });
 

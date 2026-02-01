@@ -1,39 +1,11 @@
-import {
-  CongChange,
-  CongPerson,
-  CongPersonUpdate,
-  CongScope,
-  CongSettings,
-  CongSettingsServer,
-  CongSettingsServerUpdate,
-  CongBranchAnalysis,
-  CongBranchAnalysisUpdate,
-  CongSettingsUpdate,
-  CongPatchContext,
-  CongBranchFieldServiceReport,
-  CongBranchFieldServiceReportUpdate,
-  CongFieldServiceReport,
-  CongFieldServiceReportUpdate,
-  CongFieldServiceGroupUpdate,
-  CongFieldServiceGroup,
-  CongMeetingAttendance,
-  CongMeetingAttendanceUpdate,
-  CongScheduleUpdate,
-  CongSourceUpdate,
-  CongSchedule,
-  CongSource,
-  CongSpeaker,
-  CongSpeakerUpdate,
-  CongUpcomingEvent,
-  CongUpcomingEventUpdate,
-} from '../types/index.js';
-import { s3Service } from '../services/index.js';
-import { applyDeepSyncPatch, logger } from '../utils/index.js';
+import type API from '../types/index.js';
+import Storage from '../storages/index.js';
+import Utility from '../utils/index.js';
 
 export class Congregation {
   private _id: string;
   private _ETag: string = 'v0';
-  private _settings = {} as CongSettings;
+  private _settings = {} as API.CongSettings;
 
   constructor(id: string) {
     this._id = id;
@@ -52,45 +24,22 @@ export class Congregation {
   }
 
   // --- Private Method ---
-
-  private async getStoredEtag() {
+  private async getMutations(): Promise<API.CongChange[]> {
     try {
-      const metadata = await s3Service.getObjectMetadata(
-        `congregations/${this._id}/`
-      );
+      const mutations = await Storage.Congregations.getMutations(this._id);
 
-      return metadata.etag || 'v0';
-    } catch (error: unknown) {
-      logger.error(
-        `Error fetching stored ETag for congregation ${this._id}:`,
-        error
-      );
+      // Perform on-demand cleanup
+      const { pruned, hasChanged } = this.cleanupMutations(mutations);
 
-      return 'v0';
-    }
-  }
+      if (hasChanged) {
+        await Storage.Congregations.saveMutations(this._id, pruned);
 
-  private async fetchMutations(): Promise<CongChange[]> {
-    try {
-      const key = `congregations/${this._id}/mutations.json`;
-      const content = await s3Service.getFile(key);
-
-      if (content) {
-        const mutations: CongChange[] = JSON.parse(content);
-
-        // Perform on-demand cleanup
-        const { pruned, hasChanged } = this.cleanupMutations(mutations);
-
-        if (hasChanged) {
-          await this.saveMutations(pruned);
-
-          return pruned;
-        }
-
-        return mutations;
+        return pruned;
       }
+
+      return mutations;
     } catch (error: unknown) {
-      logger.error(
+      Utility.Logger.error(
         `Error fetching mutations for congregation ${this._id}:`,
         error
       );
@@ -98,172 +47,17 @@ export class Congregation {
     return [];
   }
 
-  private async getBranchCongAnalysis(): Promise<CongBranchAnalysis[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/branch_cong_analysis.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} branch_cong_analysis:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getBranchFieldServiceReports(): Promise<
-    CongBranchFieldServiceReport[]
-  > {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/branch_field_service_reports.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} branch_field_service_reports:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getCongFieldServiceReports(): Promise<
-    CongFieldServiceReport[]
-  > {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/cong_field_service_reports.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} cong_field_service_reports:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getPersons(): Promise<CongPerson[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/persons.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id} persons:`, error);
-      return [];
-    }
-  }
-
-  private async getCongFieldServiceGroups(): Promise<CongFieldServiceGroup[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/field_service_groups.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} field_service_groups:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getCongMeetingAttendance(): Promise<CongMeetingAttendance[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/meeting_attendance.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} meeting_attendance:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getCongSchedules(): Promise<CongSchedule[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/schedules.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id} schedules:`, error);
-      return [];
-    }
-  }
-
-  private async getCongSources(): Promise<CongSource[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/sources.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id} sources:`, error);
-      return [];
-    }
-  }
-
-  private async getCongSpeakers(): Promise<CongSpeaker[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/speakers_congregations.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} speakers_congregations:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  private async getCongUpcomingEvents(): Promise<CongUpcomingEvent[]> {
-    try {
-      const content = await s3Service.getFile(
-        `congregations/${this._id}/upcoming_events.json`
-      );
-
-      return content ? JSON.parse(content) : [];
-    } catch (error: unknown) {
-      logger.error(
-        `Error loading congregation ${this._id} upcoming_events:`,
-        error
-      );
-      return [];
-    }
-  }
-
   private applyCongregationServerChange(
-    current: CongSettings,
-    patch: CongSettingsServerUpdate
+    current: API.CongSettings,
+    patch: API.CongSettingsServerUpdate
   ) {
-    const merged: CongSettings = { ...current };
+    const merged: API.CongSettings = { ...current };
 
     let hasChanges = false;
 
     // Entries gives you the key and value together
     for (const [key, newVal] of Object.entries(patch)) {
-      const k = key as keyof CongSettingsServer;
+      const k = key as keyof API.CongSettingsServer;
 
       if (newVal !== undefined && merged[k] !== newVal) {
         Object.assign(merged, { [k]: newVal });
@@ -274,39 +68,9 @@ export class Congregation {
     return { merged, hasChanges };
   }
 
-  private async saveComponent(fileName: string, data: unknown) {
-    if (!data) return;
-
-    try {
-      const baseKey = `congregations/${this._id}/`;
-
-      await s3Service.uploadFile(
-        `${baseKey}${fileName}`,
-        JSON.stringify(data),
-        'application/json'
-      );
-
-      // update in-memory data
-      if (fileName === 'settings.json') {
-        this._settings = data as CongSettings;
-      }
-    } catch (error) {
-      logger.error(
-        `Error saving component ${fileName} for congregation ${this._id}:`,
-        error
-      );
-
-      throw error;
-    }
-  }
-
-  private async saveMutations(changes: CongChange[]) {
-    await this.saveComponent('mutations.json', changes);
-  }
-
   private async saveWithHistory(
-    recordedMutations: CongChange['changes'],
-    scopes: { scope: CongScope; data: object }[]
+    recordedMutations: API.CongChange['changes'],
+    scopes: { scope: API.CongScope; data: object }[]
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
@@ -314,46 +78,85 @@ export class Congregation {
       const newEtag = `v${currentVersion + 1}`;
 
       // 1. Fetch current mutations
-      const mutations = await this.fetchMutations();
+      const mutations = await this.getMutations();
 
-      // 2. Add new mutation record with the *prospective* new ETag
-      mutations.push({
-        ETag: newEtag,
-        timestamp,
-        changes: recordedMutations,
-      });
+      // 2. Add new mutation record
+      mutations.push({ ETag: newEtag, timestamp, changes: recordedMutations });
 
-      // 3. Orchestrate parallel S3 uploads (Data Scopes + Mutation Log)
+      // 3. Define scope → save function map
+      const scopeHandlers: Record<
+        API.CongScope,
+        (data: object) => Promise<unknown>
+      > = {
+        branch_cong_analysis: (data) =>
+          Storage.Congregations.saveBranchAnalysis(
+            this._id,
+            data as API.CongBranchAnalysis[]
+          ),
+        branch_field_service_reports: (data) =>
+          Storage.Congregations.saveBranchReports(
+            this._id,
+            data as API.CongBranchFieldServiceReport[]
+          ),
+        cong_field_service_reports: (data) =>
+          Storage.Congregations.saveReports(
+            this._id,
+            data as API.CongFieldServiceReport[]
+          ),
+        field_service_groups: (data) =>
+          Storage.Congregations.saveGroups(
+            this._id,
+            data as API.CongFieldServiceGroup[]
+          ),
+        meeting_attendance: (data) =>
+          Storage.Congregations.saveMeetingAttendance(
+            this._id,
+            data as API.CongMeetingAttendance[]
+          ),
+        persons: (data) =>
+          Storage.Congregations.savePersons(this._id, data as API.CongPerson[]),
+        schedules: (data) =>
+          Storage.Congregations.saveSchedules(
+            this._id,
+            data as API.CongSchedule[]
+          ),
+        settings: (data) => this.saveSettings(data as API.CongSettings),
+        sources: (data) =>
+          Storage.Congregations.saveSources(this._id, data as API.CongSource[]),
+        speakers_congregations: (data) =>
+          Storage.Congregations.saveCongSpeakers(
+            this._id,
+            data as API.CongSpeaker[]
+          ),
+        upcoming_events: (data) =>
+          Storage.Congregations.saveUpcomingEvents(
+            this._id,
+            data as API.CongUpcomingEvent[]
+          ),
+        visiting_speakers: (data) =>
+          Storage.Congregations.saveVisitingSpeakers(
+            this._id,
+            data as API.CongVisitingSpeaker[]
+          ),
+      };
+
+      // 4. Orchestrate parallel uploads
       const uploadPromises: Promise<unknown>[] = [
-        this.saveMutations(mutations),
-      ];
+        Storage.Congregations.saveMutations(this._id, mutations),
+        ...scopes.map((entry) => scopeHandlers[entry.scope]?.(entry.data)),
+      ].filter(Boolean); // remove undefined if scope not found
 
-      for (const entry of scopes) {
-        const fileName = `${entry.scope}.json`;
-        uploadPromises.push(this.saveComponent(fileName, entry.data));
-      }
-
-      // Wait for all data files to be saved
       await Promise.all(uploadPromises);
 
-      // 4. "Commit" the transaction by updating the ETag in S3
-      await s3Service.uploadFile(
-        `congregations/${this._id}/`,
-        '',
-        'text/plain',
-        {
-          etag: newEtag,
-        }
-      );
-
-      // 5. Finally, update the in-memory ETag
+      // 5. Commit new ETag
+      await Storage.Congregations.updateETag(this._id, newEtag);
       this._ETag = newEtag;
 
-      logger.info(
-        `Congregation ${this._id} update saved with ${recordedMutations.length} mutations across ${scopes.length} scopes and ETag ${newEtag}`
+      Utility.Logger.info(
+        `Congregation ${this._id} update saved with ${recordedMutations.length} mutations across ${scopes.length} scopes. ETag committed: ${newEtag}`
       );
     } catch (error: unknown) {
-      logger.error(
+      Utility.Logger.error(
         `Error during saveWithHistory for congregation ${this._id}:`,
         error
       );
@@ -362,27 +165,27 @@ export class Congregation {
   }
 
   private async handleSettingsPatch(
-    patch: CongSettingsUpdate,
-    context: CongPatchContext
+    patch: API.CongSettingsUpdate,
+    context: API.CongPatchContext
   ) {
-    const { merged, hasChanges } = applyDeepSyncPatch(
+    const { merged, hasChanges } = Utility.Sync.deepMerge(
       context.finalSettings,
       patch
     );
 
     if (hasChanges) {
-      context.finalSettings = merged as CongSettings;
+      context.finalSettings = merged as API.CongSettings;
     }
 
     return { hasChanges, data: context.finalSettings };
   }
 
   private async handlePersonsPatch(
-    patch: CongPersonUpdate,
-    context: CongPatchContext
+    patch: API.CongPersonUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalPersons) {
-      context.finalPersons = await this.getPersons();
+      context.finalPersons = await Storage.Congregations.getPersons(this._id);
     }
 
     const persons = context.finalPersons;
@@ -395,9 +198,9 @@ export class Congregation {
     const currentPerson =
       personIndex !== -1
         ? persons[personIndex]
-        : ({ person_uid: personUid } as CongPerson);
+        : ({ person_uid: personUid } as API.CongPerson);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentPerson, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentPerson, patch);
 
     if (hasChanges) {
       if (personIndex !== -1) {
@@ -410,11 +213,12 @@ export class Congregation {
   }
 
   private async handleBranchCongAnalysisPatch(
-    patch: CongBranchAnalysisUpdate,
-    context: CongPatchContext
+    patch: API.CongBranchAnalysisUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalBranchAnalysis) {
-      context.finalBranchAnalysis = await this.getBranchCongAnalysis();
+      context.finalBranchAnalysis =
+        await Storage.Congregations.getBranchAnalysis(this._id);
     }
 
     const analysis = context.finalBranchAnalysis;
@@ -427,9 +231,9 @@ export class Congregation {
     const currentReport =
       reportIndex !== -1
         ? analysis[reportIndex]
-        : ({ report_date: reportId } as CongBranchAnalysis);
+        : ({ report_date: reportId } as API.CongBranchAnalysis);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentReport, patch);
 
     if (hasChanges) {
       if (reportIndex !== -1) {
@@ -442,12 +246,12 @@ export class Congregation {
   }
 
   private async handleBranchFieldServiceReportsPatch(
-    patch: CongBranchFieldServiceReportUpdate,
-    context: CongPatchContext
+    patch: API.CongBranchFieldServiceReportUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalBranchFieldServiceReports) {
       context.finalBranchFieldServiceReports =
-        await this.getBranchFieldServiceReports();
+        await Storage.Congregations.getBranchReports(this._id);
     }
 
     const reports = context.finalBranchFieldServiceReports;
@@ -459,9 +263,9 @@ export class Congregation {
     const currentReport =
       reportIndex !== -1
         ? reports[reportIndex]
-        : ({ report_date: reportId } as CongBranchFieldServiceReport);
+        : ({ report_date: reportId } as API.CongBranchFieldServiceReport);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentReport, patch);
 
     if (hasChanges) {
       if (reportIndex !== -1) {
@@ -474,12 +278,12 @@ export class Congregation {
   }
 
   private async handleCongFieldServiceReportsPatch(
-    patch: CongFieldServiceReportUpdate,
-    context: CongPatchContext
+    patch: API.CongFieldServiceReportUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalCongFieldServiceReports) {
       context.finalCongFieldServiceReports =
-        await this.getCongFieldServiceReports();
+        await Storage.Congregations.getReports(this._id);
     }
     const reports = context.finalCongFieldServiceReports;
     const reportId = patch.report_id;
@@ -490,9 +294,9 @@ export class Congregation {
     const currentReport =
       reportIndex !== -1
         ? reports[reportIndex]
-        : ({ report_id: reportId } as CongFieldServiceReport);
+        : ({ report_id: reportId } as API.CongFieldServiceReport);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentReport, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentReport, patch);
 
     if (hasChanges) {
       if (reportIndex !== -1) {
@@ -505,11 +309,13 @@ export class Congregation {
   }
 
   private async handleCongFieldServiceGroupsPatch(
-    patch: CongFieldServiceGroupUpdate,
-    context: CongPatchContext
+    patch: API.CongFieldServiceGroupUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalFieldServiceGroups) {
-      context.finalFieldServiceGroups = await this.getCongFieldServiceGroups();
+      context.finalFieldServiceGroups = await Storage.Congregations.getGroups(
+        this._id
+      );
     }
 
     const groups = context.finalFieldServiceGroups;
@@ -522,9 +328,9 @@ export class Congregation {
     const currentGroup =
       groupIndex !== -1
         ? groups[groupIndex]
-        : ({ group_id: groupId } as CongFieldServiceGroup);
+        : ({ group_id: groupId } as API.CongFieldServiceGroup);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentGroup, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentGroup, patch);
 
     if (hasChanges) {
       if (groupIndex !== -1) {
@@ -538,11 +344,12 @@ export class Congregation {
   }
 
   private async handleCongMeetingAttendancePatch(
-    patch: CongMeetingAttendanceUpdate,
-    context: CongPatchContext
+    patch: API.CongMeetingAttendanceUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalMeetingAttendance) {
-      context.finalMeetingAttendance = await this.getCongMeetingAttendance();
+      context.finalMeetingAttendance =
+        await Storage.Congregations.getMeetingAttendance(this._id);
     }
 
     const attendance = context.finalMeetingAttendance;
@@ -555,9 +362,9 @@ export class Congregation {
     const currentMonth =
       monthIndex !== -1
         ? attendance[monthIndex]
-        : ({ month_date: monthId } as CongMeetingAttendance);
+        : ({ month_date: monthId } as API.CongMeetingAttendance);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentMonth, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentMonth, patch);
 
     if (hasChanges) {
       if (monthIndex !== -1) {
@@ -571,11 +378,13 @@ export class Congregation {
   }
 
   private async handleCongSchedulePatch(
-    patch: CongScheduleUpdate,
-    context: CongPatchContext
+    patch: API.CongScheduleUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalSchedules) {
-      context.finalSchedules = await this.getCongSchedules();
+      context.finalSchedules = await Storage.Congregations.getSchedules(
+        this._id
+      );
     }
 
     const schedules = context.finalSchedules;
@@ -588,9 +397,12 @@ export class Congregation {
     const currentSchedule =
       weekIndex !== -1
         ? schedules[weekIndex]
-        : ({ weekOf: weekId } as CongSchedule);
+        : ({ weekOf: weekId } as API.CongSchedule);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentSchedule, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(
+      currentSchedule,
+      patch
+    );
 
     if (hasChanges) {
       if (weekIndex !== -1) {
@@ -604,11 +416,11 @@ export class Congregation {
   }
 
   private async handleCongSourcePatch(
-    patch: CongSourceUpdate,
-    context: CongPatchContext
+    patch: API.CongSourceUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalSources) {
-      context.finalSources = await this.getCongSources();
+      context.finalSources = await Storage.Congregations.getSources(this._id);
     }
 
     const sources = context.finalSources;
@@ -621,9 +433,9 @@ export class Congregation {
     const currentSource =
       weekIndex !== -1
         ? sources[weekIndex]
-        : ({ weekOf: weekId } as CongSource);
+        : ({ weekOf: weekId } as API.CongSource);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentSource, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentSource, patch);
 
     if (hasChanges) {
       if (weekIndex !== -1) {
@@ -637,11 +449,12 @@ export class Congregation {
   }
 
   private async handleCongSpeakerPatch(
-    patch: CongSpeakerUpdate,
-    context: CongPatchContext
+    patch: API.CongSpeakerUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalSpeakersCongregations) {
-      context.finalSpeakersCongregations = await this.getCongSpeakers();
+      context.finalSpeakersCongregations =
+        await Storage.Congregations.getCongSpeakers(this._id);
     }
 
     const congs = context.finalSpeakersCongregations;
@@ -652,9 +465,9 @@ export class Congregation {
     const congIndex = congs.findIndex((r) => r.id === congId);
 
     const currentCong =
-      congIndex !== -1 ? congs[congIndex] : ({ id: congId } as CongSpeaker);
+      congIndex !== -1 ? congs[congIndex] : ({ id: congId } as API.CongSpeaker);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentCong, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentCong, patch);
 
     if (hasChanges) {
       if (congIndex !== -1) {
@@ -668,11 +481,12 @@ export class Congregation {
   }
 
   private async handleCongUpcomingEventPatch(
-    patch: CongUpcomingEventUpdate,
-    context: CongPatchContext
+    patch: API.CongUpcomingEventUpdate,
+    context: API.CongPatchContext
   ) {
     if (!context.finalUpcomingEvents) {
-      context.finalUpcomingEvents = await this.getCongUpcomingEvents();
+      context.finalUpcomingEvents =
+        await Storage.Congregations.getUpcomingEvents(this._id);
     }
 
     const events = context.finalUpcomingEvents;
@@ -685,9 +499,9 @@ export class Congregation {
     const currentEvent =
       eventIndex !== -1
         ? events[eventIndex]
-        : ({ event_uid: eventId } as CongUpcomingEvent);
+        : ({ event_uid: eventId } as API.CongUpcomingEvent);
 
-    const { merged, hasChanges } = applyDeepSyncPatch(currentEvent, patch);
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentEvent, patch);
 
     if (hasChanges) {
       if (eventIndex !== -1) {
@@ -701,39 +515,28 @@ export class Congregation {
   }
 
   // --- Public Method ---
-
   public async load() {
     try {
-      const baseKey = `congregations/${this._id}/`;
-
-      const fetchFile = async (fileName: string) => {
-        try {
-          const content = await s3Service.getFile(`${baseKey}${fileName}`);
-          return content ? JSON.parse(content) : null;
-        } catch (error: unknown) {
-          logger.error(
-            `Error loading congregation ${this._id} file ${fileName}:`,
-            error
-          );
-        }
-      };
-
       const [settingsData, etag] = await Promise.all([
-        fetchFile('settings.json'),
-        this.getStoredEtag(),
+        Storage.Congregations.getSettings(this._id),
+        Storage.Congregations.getETag(this._id),
       ]);
 
-      if (settingsData) {
-        this._settings = settingsData;
-      }
+      this._settings = settingsData;
 
       this._ETag = etag;
     } catch (error: unknown) {
-      logger.error(`Error loading congregation ${this._id}:`, error);
+      Utility.Logger.error(`Error loading congregation ${this._id}:`, error);
     }
   }
 
-  public cleanupMutations(changes: CongChange[], cutoffDate?: Date) {
+  public async saveSettings(settings: API.CongSettings) {
+    await Storage.Congregations.saveSettings(this._id, settings);
+
+    this._settings = settings;
+  }
+
+  public cleanupMutations(changes: API.CongChange[], cutoffDate?: Date) {
     if (!changes || changes.length === 0) {
       return { pruned: [], hasChanged: false };
     }
@@ -752,52 +555,52 @@ export class Congregation {
     return { pruned, hasChanged: pruned.length < initialLength };
   }
 
-  public async applyServerSettingsPatch(patch: CongSettingsServerUpdate) {
-    const baseSettings = this._settings || {};
+  public async applyServerSettingsPatch(patch: API.CongSettingsServerUpdate) {
+    try {
+      const baseSettings = this._settings || {};
 
-    const { merged, hasChanges } = this.applyCongregationServerChange(
-      baseSettings,
-      patch
-    );
+      const { merged, hasChanges } = this.applyCongregationServerChange(
+        baseSettings,
+        patch
+      );
 
-    if (hasChanges) {
-      const oldSettings = this._settings;
-      this._settings = merged as CongSettings;
+      if (hasChanges) {
+        await this.saveSettings(merged);
 
-      try {
-        await this.saveComponent('settings.json', this._settings);
-
-        logger.info(
+        Utility.Logger.info(
           `Server settings patch applied for congregation ${this._id} (quiet)`
         );
-      } catch (error: unknown) {
-        this._settings = oldSettings;
-        throw error;
       }
+    } catch (error) {
+      Utility.Logger.error(
+        `Error applying server settings patch for congregation ${this._id}:`,
+        error
+      );
+      throw error;
     }
   }
 
-  public async applyBatchedChanges(changes: CongChange['changes']) {
+  public async applyBatchedChanges(changes: API.CongChange['changes']) {
     try {
       type ScopeData =
-        | CongSettings
-        | CongPerson[]
-        | CongBranchAnalysis[]
-        | CongBranchFieldServiceReport[]
-        | CongFieldServiceReport[]
-        | CongFieldServiceGroup[]
-        | CongMeetingAttendance[]
-        | CongSchedule[]
-        | CongSource[]
-        | CongSpeaker[]
-        | CongUpcomingEvent[];
+        | API.CongSettings
+        | API.CongPerson[]
+        | API.CongBranchAnalysis[]
+        | API.CongBranchFieldServiceReport[]
+        | API.CongFieldServiceReport[]
+        | API.CongFieldServiceGroup[]
+        | API.CongMeetingAttendance[]
+        | API.CongSchedule[]
+        | API.CongSource[]
+        | API.CongSpeaker[]
+        | API.CongUpcomingEvent[];
 
-      const recordedMutations: CongChange['changes'] = [];
+      const recordedMutations: API.CongChange['changes'] = [];
 
-      const scopesToSave = new Map<CongScope, ScopeData>();
+      const scopesToSave = new Map<API.CongScope, ScopeData>();
 
-      const context: CongPatchContext = {
-        finalSettings: this._settings || ({} as CongSettings),
+      const context: API.CongPatchContext = {
+        finalSettings: this._settings || ({} as API.CongSettings),
         finalBranchAnalysis: undefined,
         finalPersons: undefined,
         finalBranchFieldServiceReports: undefined,
@@ -891,34 +694,39 @@ export class Congregation {
 
         await this.saveWithHistory(recordedMutations, finalScopes);
 
-        logger.info(
+        Utility.Logger.info(
           `Successfully applied batch: ${recordedMutations.length} mutations for congregation ${this._id}`
         );
       } else {
-        logger.info(
+        Utility.Logger.info(
           `No changes to apply from batch for congregation ${this._id}`
         );
       }
     } catch (error) {
-      logger.error(`Error applying batched changes for ${this._id}:`, error);
+      Utility.Logger.error(
+        `Error applying batched changes for ${this._id}:`,
+        error
+      );
       throw error;
     }
   }
 
-  public async applyCongSettingsPatch(patch: CongSettingsUpdate) {
+  public async applyCongSettingsPatch(patch: API.CongSettingsUpdate) {
     return this.applyBatchedChanges([{ scope: 'settings', patch }]);
   }
 
-  public async applyBranchCongAnalysisPatch(patch: CongBranchAnalysisUpdate) {
+  public async applyBranchCongAnalysisPatch(
+    patch: API.CongBranchAnalysisUpdate
+  ) {
     return this.applyBatchedChanges([{ scope: 'branch_cong_analysis', patch }]);
   }
 
-  public async applyPersonPatch(patch: CongPersonUpdate) {
+  public async applyPersonPatch(patch: API.CongPersonUpdate) {
     return this.applyBatchedChanges([{ scope: 'persons', patch }]);
   }
 
   public async applyBranchFieldServiceReportPatch(
-    patch: CongBranchFieldServiceReportUpdate
+    patch: API.CongBranchFieldServiceReportUpdate
   ) {
     return this.applyBatchedChanges([
       { scope: 'branch_field_service_reports', patch },
@@ -926,7 +734,7 @@ export class Congregation {
   }
 
   public async applyCongFieldServiceReportPatch(
-    patch: CongFieldServiceReportUpdate
+    patch: API.CongFieldServiceReportUpdate
   ) {
     return this.applyBatchedChanges([
       { scope: 'cong_field_service_reports', patch },
@@ -934,32 +742,32 @@ export class Congregation {
   }
 
   public async applyCongFieldServiceGroupPatch(
-    patch: CongFieldServiceGroupUpdate
+    patch: API.CongFieldServiceGroupUpdate
   ) {
     return this.applyBatchedChanges([{ scope: 'field_service_groups', patch }]);
   }
 
   public async applyCongMeetingAttendancePatch(
-    patch: CongMeetingAttendanceUpdate
+    patch: API.CongMeetingAttendanceUpdate
   ) {
     return this.applyBatchedChanges([{ scope: 'meeting_attendance', patch }]);
   }
 
-  public async applyCongSchedulePatch(patch: CongScheduleUpdate) {
+  public async applyCongSchedulePatch(patch: API.CongScheduleUpdate) {
     return this.applyBatchedChanges([{ scope: 'schedules', patch }]);
   }
 
-  public async applyCongSourcePatch(patch: CongSourceUpdate) {
+  public async applyCongSourcePatch(patch: API.CongSourceUpdate) {
     return this.applyBatchedChanges([{ scope: 'sources', patch }]);
   }
 
-  public async applyCongSpeakerPatch(patch: CongSpeakerUpdate) {
+  public async applyCongSpeakerPatch(patch: API.CongSpeakerUpdate) {
     return this.applyBatchedChanges([
       { scope: 'speakers_congregations', patch },
     ]);
   }
 
-  public async applyCongUpcomingEventPatch(patch: CongUpcomingEventUpdate) {
+  public async applyCongUpcomingEventPatch(patch: API.CongUpcomingEventUpdate) {
     return this.applyBatchedChanges([{ scope: 'upcoming_events', patch }]);
   }
 }

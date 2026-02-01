@@ -1,14 +1,16 @@
-import { ScheduledTask } from '../types/index.js';
-import { logger } from '../utils/index.js';
+import type API from '../types/index.js';
+import Utility from '../utils/index.js';
 
 class SchedulerService {
-  private tasks: Map<string, ScheduledTask> = new Map();
+  private tasks: Map<string, API.ScheduledTask> = new Map();
   // Store timers so we can clear them later
   private timers: Map<string, NodeJS.Timeout[]> = new Map();
 
-  register(task: ScheduledTask) {
+  register(task: API.ScheduledTask) {
     if (this.tasks.has(task.name)) {
-      logger.warn(`Task [${task.name}] is already registered. Skipping.`);
+      Utility.Logger.warn(
+        `Task [${task.name}] is already registered. Skipping.`
+      );
       return;
     }
 
@@ -21,10 +23,15 @@ class SchedulerService {
       this.timers.get(task.name)?.push(initTimer);
     }
 
-    const intervalTimer = setInterval(() => this._executeTask(task), task.interval);
+    const intervalTimer = setInterval(
+      () => this._executeTask(task),
+      task.interval
+    );
     this.timers.get(task.name)?.push(intervalTimer);
 
-    logger.info(`Task [${task.name}] registered (Interval: ${task.interval / 1000 / 60}m)`);
+    Utility.Logger.info(
+      `Task [${task.name}] registered (Interval: ${task.interval / 1000 / 60}m)`
+    );
   }
 
   /**
@@ -33,22 +40,25 @@ class SchedulerService {
   stopAll() {
     for (const taskName of this.tasks.keys()) {
       const taskTimers = this.timers.get(taskName) || [];
-      taskTimers.forEach(timer => clearInterval(timer));
+      taskTimers.forEach((timer) => clearInterval(timer));
       this.timers.delete(taskName);
     }
     this.tasks.clear();
-    logger.info('All scheduled tasks have been stopped.');
+    Utility.Logger.info('All scheduled tasks have been stopped.');
   }
 
-  private async _executeTask(task: ScheduledTask) {
+  private async _executeTask(task: API.ScheduledTask) {
     try {
-      logger.info(`Executing scheduled task: ${task.name}...`);
+      Utility.Logger.info(`Executing scheduled task: ${task.name}...`);
       await task.run();
-      logger.info(`Task [${task.name}] executed successfully.`);
+      Utility.Logger.info(`Task [${task.name}] executed successfully.`);
     } catch (error) {
-      logger.error(`Error executing scheduled task [${task.name}]:`, error);
+      Utility.Logger.error(
+        `Error executing scheduled task [${task.name}]:`,
+        error
+      );
     }
   }
 }
 
-export const schedulerService = new SchedulerService();
+export default new SchedulerService();

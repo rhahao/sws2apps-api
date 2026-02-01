@@ -5,7 +5,7 @@
  * -1 if a < b
  *  0 if a == b
  */
-export const compareVersions = (v1: string, v2: string): number => {
+export const compare = (v1: string, v2: string): number => {
   const parts1 = v1.split('.').map(Number);
   const parts2 = v2.split('.').map(Number);
 
@@ -25,9 +25,6 @@ export const compareVersions = (v1: string, v2: string): number => {
 /**
  * Checks if the current version is greater than or equal to the minimum.
  */
-export const isVersionSupported = (
-  current: string,
-  minimum: string,
-): boolean => {
-  return compareVersions(current, minimum) >= 0;
+export const isSupported = (current: string, minimum: string): boolean => {
+  return compare(current, minimum) >= 0;
 };

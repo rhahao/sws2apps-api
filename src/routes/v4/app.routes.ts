@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { validateRequest } from '../../middleware/index.js';
-import { FeatureFlagsHeaderSchema } from '../../validators/index.js';
-import { appController } from '../../controllers/index.js';
+import Controller from '../../controllers/index.js';
+import Middleware from '../../middleware/index.js';
+import Validator from '../../validators/index.js';
 
 const router = Router();
 
@@ -9,6 +9,12 @@ const router = Router();
  * Public endpoint to fetch feature flags.
  * Requires installation_id header.
  */
-router.get('/feature-flags', validateRequest({ headers: FeatureFlagsHeaderSchema }), appController.getFeatureFlags);
+router.get(
+  '/feature-flags',
+  Middleware.validateRequest({
+    headers: Validator.FeatureFlagsHeaderSchema,
+  }),
+  Controller.App.getFeatureFlags
+);
 
 export default router;

@@ -1,4 +1,4 @@
-import { SyncResult, DeepPartial } from '../types/index.js';
+import type API from '../types/index.js';
 
 /**
  * Checks if a value is a plain object.
@@ -19,10 +19,10 @@ const isNewer = (clientDate?: string, serverDate?: string): boolean => {
 /**
  * Recursively applies a patch to a target object using 'updatedAt' for conflict resolution.
  */
-export const applyDeepSyncPatch = <T extends object>(
+export const deepMerge = <T extends object>(
   target: T,
-  patch: DeepPartial<T>
-): SyncResult<T> => {
+  patch: API.DeepPartial<T>
+): API.SyncResult<T> => {
   let hasChanges = false;
 
   const merge = (currentValue: unknown, incomingValue: unknown): unknown => {
@@ -129,7 +129,7 @@ export const applyDeepSyncPatch = <T extends object>(
             mergedResult[key] = merge(currentPropValue, incomingPropValue);
           }
         }
-        
+
         return mergedResult;
       }
     }

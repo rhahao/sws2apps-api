@@ -1,9 +1,19 @@
-export * from './app.service.js';
-export * from './congregation_registry.service.js';
-export * from './i18n.service.js';
-export * from './s3.service.js';
-export * from './scheduler.service.js';
-export * from './seeder.service.js';
-export * from './socket.service.js'
-export * from './storage-init.service.js';
-export * from './user_registry.service.js';
+import Auth from './auth.service.js';
+import API from './api.service.js';
+import Congregations from './congregations.service.js';
+import * as i18n from './i18n.service.js';
+import Scheduler from './scheduler.service.js';
+import Seeder from './seeder.service.js';
+import * as Socket from './socket.service.js';
+import Users from './users.service.js';
+
+export default {
+  Auth,
+  API,
+  Congregations,
+  i18n,
+  Scheduler,
+  Seeder,
+  Socket,
+  Users,
+};

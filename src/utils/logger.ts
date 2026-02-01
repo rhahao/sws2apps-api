@@ -1,72 +1,63 @@
 import { Logtail } from '@logtail/node';
-import { ENV } from '../config/index.js';
+import { Context, LogLevel } from '@logtail/types';
+import Config from '../config/index.js';
 
-enum LogLevel {
-  ERROR = 'error',
-  WARN = 'warn',
-  INFO = 'info',
-  DEBUG = 'debug',
-}
+let logtail: Logtail;
 
-class Logger {
-  private logtail?: Logtail;
+const getTimestamp = () => {
+  return new Date().toISOString();
+};
 
-  constructor() {
-    const token = ENV.logtailSourceToken;
-
-    if (token) {
-      this.logtail = new Logtail(token, {
-        endpoint: ENV.logtailEndpoint,
-      });
-    }
+const log = (
+  level: LogLevel,
+  message: string,
+  context?: Context,
+  error?: unknown
+) => {
+  if (!logtail && Config.ENV.logtailSourceToken) {
+    logtail = new Logtail(Config.ENV.logtailSourceToken, {
+      endpoint: Config.ENV.logtailEndpoint,
+    });
   }
 
-  private getTimestamp(): string {
-    return new Date().toISOString();
+  const timestamp = getTimestamp();
+
+  const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+
+  // 1. Console Logging (Formatted for terminal)
+  if (error) {
+    console.error(logMessage, error);
+  } else {
+    console[level as 'warn' | 'info' | 'debug'](logMessage);
   }
 
-  private log(level: LogLevel, message: string, meta?: unknown): void {
-    const timestamp = this.getTimestamp();
-    const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  // 2. Cloud Logging (BetterStack)
+  if (logtail) {
+    logtail[level as 'error' | 'warn' | 'info' | 'debug'](message, context);
 
-    // 1. Console Logging (Formatted for terminal)
-    if (meta) {
-      console.log(logMessage, meta);
-    } else {
-      console.log(logMessage);
-    }
-
-    // 2. Cloud Logging (BetterStack)
-    if (this.logtail) {
-      this.logtail[level as 'error' | 'warn' | 'info' | 'debug'](
-        message,
-        meta as Record<string, unknown>
-      );
-    }
+    logtail.flush();
   }
+};
 
-  error(message: string, error?: unknown): void {
-    const meta =
-      error instanceof Error
-        ? { error: error.message, stack: error.stack }
-        : error;
-    this.log(LogLevel.ERROR, message, meta);
-  }
+export const error = (message: string, error: unknown, context?: Context) => {
+  const errorData =
+    error instanceof Error
+      ? { error: error.message, stack: error.stack }
+      : error;
 
-  warn(message: string, meta?: unknown): void {
-    this.log(LogLevel.WARN, message, meta);
-  }
+  log(LogLevel.Error, message, context, errorData);
+};
 
-  info(message: string, meta?: unknown): void {
-    this.log(LogLevel.INFO, message, meta);
-  }
+export const warn = (message: string, context?: Context) => {
+  log(LogLevel.Warn, message, context);
+};
 
-  debug(message: string, meta?: unknown): void {
-    if (ENV.nodeEnv === 'development') {
-      // Use this.config
-      this.log(LogLevel.DEBUG, message, meta);
-    }
-  }
-}
+export const info = (message: string, context?: Context) => {
+  log(LogLevel.Info, message, context);
+};
 
-export const logger = new Logger();
+export const debug = (message: string, context?: Context) => {
+  if (Config.ENV.nodeEnv !== 'development') return;
+
+  log(LogLevel.Debug, message, context);
+};

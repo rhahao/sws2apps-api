@@ -1,12 +1,13 @@
 import { FirebaseAuthError, getAuth } from 'firebase-admin/auth';
 import randomstring from 'randomstring';
-import { decryptData, encryptData, logger } from '../utils/index.js';
-import { User } from '../models/index.js';
-import { s3Service } from './s3.service.js';
-import { AppRoleType, GenericObject } from '../types/index.js';
+import type API from '../types/index.js';
+import AuthService from './auth.service.js';
+import Model from '../models/index.js';
+import Storage from '../storages/index.js';
+import Utility from '../utils/index.js';
 
-export class UserRegistry {
-  private users: Map<string, User> = new Map();
+class UserRegistry {
+  private users: Map<string, Model.User> = new Map();
   private visitorIndex: Map<string, string> = new Map();
 
   get count() {
@@ -19,7 +20,7 @@ export class UserRegistry {
     return Array.from(this.users.values());
   }
 
-  private indexUserSessions(user: User) {
+  private indexUserSessions(user: Model.User) {
     user.sessions.forEach((session) => {
       if (session.visitorid) {
         this.visitorIndex.set(session.visitorid, user.id);
@@ -38,14 +39,11 @@ export class UserRegistry {
   public async loadIndex() {
     try {
       const startTime = Date.now();
-      logger.info('Indexing users from storage...');
+      Utility.Logger.info('Indexing users from storage...');
 
-      const folders = await s3Service.listFolders('users/');
+      const userIds = await Storage.Users.getIds();
+
       this.users.clear();
-
-      const userIds = folders
-        .map((f) => f.split('/')[1])
-        .filter((id): id is string => !!id);
 
       // Process in concurrent batches to optimize startup speed
       const CONCURRENCY_LIMIT = 20;
@@ -58,10 +56,10 @@ export class UserRegistry {
           batch.map(async (userId) => {
             processedCount++;
             try {
-              logger.info(
+              Utility.Logger.info(
                 `Indexing user ${userId} (${processedCount}/${userIds.length})...`
               );
-              const user = new User(userId);
+              const user = new Model.User(userId);
 
               await user.load();
 
@@ -69,7 +67,7 @@ export class UserRegistry {
 
               this.indexUserSessions(user);
             } catch (err) {
-              logger.error(
+              Utility.Logger.error(
                 `Failed to load user ${userId} during indexing:`,
                 err
               );
@@ -79,11 +77,11 @@ export class UserRegistry {
       }
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      logger.info(
+      Utility.Logger.info(
         `Successfully indexed ${this.users.size} users in ${duration}s.`
       );
     } catch (error) {
-      logger.error('Failed to load user index:', error);
+      Utility.Logger.error('Failed to load user index:', error);
     }
   }
 
@@ -109,7 +107,7 @@ export class UserRegistry {
     return userId ? this.users.get(userId) : undefined;
   }
 
-  public updateIndexForUser(user: User) {
+  public updateIndexForUser(user: Model.User) {
     this.users.set(user.id, user);
 
     this.indexUserSessions(user);
@@ -120,7 +118,7 @@ export class UserRegistry {
   }
 
   public async performHistoryMaintenance() {
-    logger.info('Starting daily history maintenance...');
+    Utility.Logger.info('Starting daily history maintenance...');
 
     const users = this.getUsers();
 
@@ -133,11 +131,11 @@ export class UserRegistry {
     for (const user of users) {
       try {
         // 1. Maintain History (Mutations)
-        const mutations = await user.fetchMutations();
+        const mutations = await user.getMutations();
         const { pruned, hasChanged } = user.cleanupMutations(mutations, cutoff);
 
         if (hasChanged) {
-          await user.saveMutations(pruned);
+          await Storage.Users.saveMutations(user.id, pruned);
         }
 
         // 2. Maintain Active Sessions
@@ -152,7 +150,7 @@ export class UserRegistry {
           usersCleaned++;
         }
       } catch (error) {
-        logger.error(`Failed maintenance for user ${user.id}:`, error);
+        Utility.Logger.error(`Failed maintenance for user ${user.id}:`, error);
       }
     }
 
@@ -160,7 +158,7 @@ export class UserRegistry {
       this.rebuildVisitorIndex();
     }
 
-    logger.info(
+    Utility.Logger.info(
       `History maintenance completed. Cleaned ${usersCleaned} users.`
     );
   }
@@ -185,15 +183,15 @@ export class UserRegistry {
           }
         }
 
-        await getAuth().updateUser(auth_uid, {
-          email: email,
-          displayName: displayName,
+        await AuthService.updateUser(auth_uid, {
+          email,
+          displayName,
         });
       }
 
       const userId = crypto.randomUUID().toUpperCase();
 
-      const newUser = new User(userId);
+      const newUser = new Model.User(userId);
       const now = new Date().toISOString();
 
       await newUser.applyServerProfilePatch({
@@ -213,7 +211,7 @@ export class UserRegistry {
 
       return newUser;
     } catch (error) {
-      logger.error(`Failed to create user ${params.auth_uid}:`, error);
+      Utility.Logger.error(`Failed to create user ${params.auth_uid}:`, error);
 
       throw error;
     }
@@ -224,7 +222,9 @@ export class UserRegistry {
       const user = this.users.get(userId);
 
       if (!user) {
-        logger.warn(`Delete failed: User ${userId} not found in registry.`);
+        Utility.Logger.warn(
+          `Delete failed: User ${userId} not found in registry.`
+        );
         return false;
       }
 
@@ -233,25 +233,30 @@ export class UserRegistry {
 
       if (authUid) {
         try {
-          await getAuth().deleteUser(authUid);
+          await AuthService.deleteUser(authUid);
         } catch (authError) {
           // just log firebase error but proceed with S3 delete
-          logger.error(`Failed to delete firebase user ${authUid}:`, authError);
+          Utility.Logger.error(
+            `Failed to delete firebase user ${authUid}:`,
+            authError
+          );
         }
       }
 
       // 2. Delete S3 Folder (users/{userId}/)
-      await s3Service.deleteFolder(`users/${userId}/`);
+      await Storage.deleteFolder(`users/${userId}/`);
 
       // 3. Remove from Registry and rebuild Visitor Index
       this.users.delete(userId);
       this.rebuildVisitorIndex();
 
-      logger.info(`User ${userId} deleted successfully from all systems.`);
+      Utility.Logger.info(
+        `User ${userId} deleted successfully from all systems.`
+      );
 
       return true;
     } catch (error) {
-      logger.error(`Failed to delete user ${userId}:`, error);
+      Utility.Logger.error(`Failed to delete user ${userId}:`, error);
 
       throw error;
     }
@@ -262,7 +267,7 @@ export class UserRegistry {
     user_lastname: string;
     user_secret_code: string;
     cong_id: string;
-    cong_role: AppRoleType[];
+    cong_role: API.AppRoleType[];
     cong_person_uid: string;
   }) {
     try {
@@ -277,7 +282,7 @@ export class UserRegistry {
 
       // 1. Generate internal ID and initialize Model
       const userId = crypto.randomUUID().toUpperCase();
-      const newUser = new User(userId);
+      const newUser = new Model.User(userId);
       const now = new Date().toISOString();
 
       // 2. Apply "Pocket" specific profile patches
@@ -286,7 +291,9 @@ export class UserRegistry {
         createdAt: now,
         congregation: {
           id: cong_id,
-          pocket_invitation_code: encryptData(user_secret_code),
+          pocket_invitation_code: await Utility.Encryption.encrypt(
+            user_secret_code
+          ),
           account_type: 'pocket',
           cong_role,
           user_local_uid: cong_person_uid,
@@ -300,24 +307,24 @@ export class UserRegistry {
 
       this.updateIndexForUser(newUser);
 
-      logger.info(
+      Utility.Logger.info(
         `Pocket user created: ${userId} for congregation: ${cong_id}`
       );
 
       return newUser;
     } catch (error) {
-      logger.error(`Failed to create pocket user:`, error);
+      Utility.Logger.error(`Failed to create pocket user:`, error);
       throw error;
     }
   }
 
-  public generateAuthLink(params: { email: string; origin: string }) {
+  public async generateAuthLink(params: { email: string; origin: string }) {
     const { email, origin } = params;
 
     try {
       const user = this.findByEmail(email);
 
-      const claims: GenericObject = {
+      const claims: API.GenericObject = {
         email,
       };
 
@@ -329,7 +336,7 @@ export class UserRegistry {
       const expires = Date.now() + 5 * 60 * 1000;
 
       // Does NOT allow magic login. Requires 'c' (code) to be provided by user.
-      const browserHandshake = encryptData(
+      const browserHandshake = await Utility.Encryption.encrypt(
         JSON.stringify({
           e: email,
           c: emailOTP,
@@ -339,7 +346,7 @@ export class UserRegistry {
       );
 
       // Contains the same data but 'isMagic' is true.
-      const emailHandshake = encryptData(
+      const emailHandshake = await Utility.Encryption.encrypt(
         JSON.stringify({
           e: email,
           c: emailOTP,
@@ -358,7 +365,7 @@ export class UserRegistry {
 
       return { browserLink, emailLink, otp: emailOTP };
     } catch (error) {
-      logger.error(`Failed to generate auth link:`, error);
+      Utility.Logger.error(`Failed to generate auth link:`, error);
       throw error;
     }
   }
@@ -368,7 +375,7 @@ export class UserRegistry {
 
     try {
       // 1. Decrypt the handshake
-      const decrypted = decryptData(handshake);
+      const decrypted: string = await Utility.Encryption.decrypt(handshake);
 
       if (!decrypted) throw new Error('api.auth.invalid_handshake');
 
@@ -427,11 +434,11 @@ export class UserRegistry {
 
       return { token: loginToken, user };
     } catch (error) {
-      logger.error(`Failed to verify and create user:`, error);
+      Utility.Logger.error(`Failed to verify and create user:`, error);
 
       throw error;
     }
   }
 }
 
-export const userRegistry = new UserRegistry();
+export default new UserRegistry();
