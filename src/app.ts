@@ -5,14 +5,10 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import v4Router from './routes/index.js';
-import {
-  errorHandler,
-  notFoundHandler,
-  readinessGuard,
-} from './middleware/index.js';
-import { i18nMiddleware, appService } from './services/index.js';
-import { ENV } from './config/index.js';
-import { logger } from './utils/index.js';
+import Middleware from './middleware/index.js';
+import Service from './services/index.js';
+import Config from './config/index.js';
+import Utility from './utils/index.js';
 
 /**
  * Create and configure Express application
@@ -28,14 +24,14 @@ const createApp = (): Express => {
   app.use(compression());
 
   // Enable cookie parsing with cryptographic signing
-  app.use(cookieParser(ENV.secEncryptKey));
+  app.use(cookieParser(Config.ENV.secEncryptKey));
 
   // Security middleware
   app.use(helmet());
 
   app.use(
     cors({
-      origin: ENV.cors.allowedOrigins,
+      origin: Config.ENV.cors.allowedOrigins,
       credentials: true,
     })
   );
@@ -45,15 +41,15 @@ const createApp = (): Express => {
   app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
   // i18n middleware (Language detection & 't' function attachment)
-  app.use(i18nMiddleware);
+  app.use(Service.i18n.middleware);
 
   // Serve static files
   app.use(express.static('public'));
 
   // Rate limiting
   const limiter = rateLimit({
-    windowMs: ENV.rateLimit.windowMs,
-    max: ENV.rateLimit.max,
+    windowMs: Config.ENV.rateLimit.windowMs,
+    max: Config.ENV.rateLimit.max,
     message: 'Too many requests from this IP, please try again later.',
   });
 
@@ -61,7 +57,7 @@ const createApp = (): Express => {
 
   // Health check endpoints (Unprotected)
   app.get('/health', (_req, res) => {
-    const status = appService.isReady ? 'READY' : 'STARTING';
+    const status = Service.API.isReady ? 'READY' : 'STARTING';
     res.json({
       status,
       uptime: process.uptime(),
@@ -78,16 +74,16 @@ const createApp = (): Express => {
   });
 
   // Readiness Guard (Protects all routes below)
-  app.use(readinessGuard);
+  app.use(Middleware.readinessGuard);
 
   // Mount API versions
   app.use('/api', v4Router);
 
   // Error handlers (must be last)
-  app.use(notFoundHandler);
-  app.use(errorHandler);
+  app.use(Middleware.notFoundHandler);
+  app.use(Middleware.errorHandler);
 
-  logger.info('Express app configured successfully');
+  Utility.Logger.info('Express app configured successfully');
 
   return app;
 };

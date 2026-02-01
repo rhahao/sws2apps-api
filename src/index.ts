@@ -1,14 +1,9 @@
 import dotenv from 'dotenv';
 import http from 'node:http';
-import { logger } from './utils/index.js';
-import {
-  initializeStorage,
-  initI18n,
-  appService,
-  initSocketIO,
-} from './services/index.js';
-import { initializeFirebaseAdmin } from './config/index.js';
 import app from './app.js';
+import Service from './services/index.js';
+import Storage from './storages/index.js';
+import Utility from './utils/index.js';
 
 // Load environment variables
 dotenv.config();
@@ -18,27 +13,28 @@ const PORT = process.env.PORT || 8000;
 const server = http.createServer(app);
 
 // Initialize Socket.IO
-const io = initSocketIO(server);
+const io = Service.Socket.init(server);
 
 // Start server immediately (Non-blocking)
 server.listen(PORT, async () => {
-  logger.info(`🚀 Server is running on port ${PORT}`);
+  Utility.Logger.info(`🚀 Server is running on port ${PORT}`);
 
   try {
     // 1. Initialize i18n
-    await initI18n();
+    await Service.i18n.init();
 
     // 2. Initialize Firebase Admin
-    initializeFirebaseAdmin();
+    Service.Auth.initialize();
 
     // 3. Perform background storage initialization
-    await initializeStorage();
+    await Storage.initialize();
 
     app.set('io', io);
 
-    appService.isReady = true;
-    logger.info('System initialized and ready to serve traffic');
+    Service.API.isReady = true;
+
+    Utility.Logger.info('System initialized and ready to serve traffic');
   } catch (err) {
-    logger.error('Critical failure during initialization:', err);
+    Utility.Logger.error('Critical failure during initialization:', err);
   }
 });

@@ -4,7 +4,7 @@ import Config from '../config/index.js';
 import Utility from '../utils/index.js';
 
 class AuthService {
-  public async initialize() {
+  public initialize() {
     try {
       const isEmulator = !!process.env.FIREBASE_AUTH_EMULATOR_HOST;
 
