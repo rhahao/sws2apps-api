@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { z, ZodType } from 'zod';
+import { z } from 'zod';
 import { NextFunction, Request, Response } from 'express';
 import { validateRequest } from '../../src/middleware/validate.middleware.js';
-import { RequestSchemas } from '../../src/types/index.js';
+import type API from '../types/index.js';
 
 describe('validateRequest Middleware', () => {
-  let mockRes: Response;
+  let mockRes: Partial<Response>
   let next: NextFunction;
 
   beforeEach(() => {
@@ -13,7 +13,7 @@ describe('validateRequest Middleware', () => {
     mockRes = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
-    } as unknown as Response
+    }
     next = vi.fn();
   });
 
@@ -29,12 +29,34 @@ describe('validateRequest Middleware', () => {
 
     const middleware = validateRequest(schema);
 
-    await middleware(mockReq, mockRes, next);
+    await middleware(mockReq, mockRes as Response, next);
 
     expect(next).toHaveBeenCalledWith();
     // Zod usually strips unknown keys by default if using .parse()
     expect(mockReq.body).toEqual({ name: 'Alice', age: 30 });
   });
+
+  it('should validate headers and reject invalid ones', async () => {
+    const schema = {
+      headers: z.object({
+        installation: z.uuid(),
+      }),
+    };
+  
+    const mockReq = { headers: { installation: 'invalid' } } as unknown as Request;
+    const middleware = validateRequest(schema);
+  
+    await middleware(mockReq, mockRes as Response, next);
+  
+    expect(mockRes.status).toHaveBeenCalledWith(400);
+    expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({
+        code: 'api.validation.failed',
+      }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+  
 
   it('should handle Zod transformation/coercion (e.g., for updatedAt)', async () => {
     const schema = {
@@ -47,7 +69,7 @@ describe('validateRequest Middleware', () => {
 
     const middleware = validateRequest(schema);
 
-    await middleware(mockReq, mockRes, next);
+    await middleware(mockReq, mockRes as Response, next);
 
     expect(mockReq.body.updatedAt).toBeInstanceOf(Date);
     expect(mockReq.body.updatedAt.getFullYear()).toBe(2026);
@@ -63,7 +85,7 @@ describe('validateRequest Middleware', () => {
     const mockReq = { query: { id: 'not-a-uuid' } } as unknown as Request;
     const middleware = validateRequest(schema);
 
-    await middleware(mockReq, mockRes, next);
+    await middleware(mockReq, mockRes as Response, next);
 
     expect(mockRes.status).toHaveBeenCalledWith(400);
     expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -88,9 +110,9 @@ describe('validateRequest Middleware', () => {
     
     const mockReq = { body: {} } as Request;
 
-    const middleware = validateRequest(schema as unknown as RequestSchemas);
+    const middleware = validateRequest(schema as unknown as API.RequestSchemas);
 
-    await middleware(mockReq, mockRes, next);
+    await middleware(mockReq, mockRes as Response, next);
 
     expect(next).toHaveBeenCalledWith(expect.any(Error));
     expect((next as Mock).mock.calls[0][0].message).toBe('Unexpected Crash');
