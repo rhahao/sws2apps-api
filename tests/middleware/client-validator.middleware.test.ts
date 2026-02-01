@@ -2,67 +2,92 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextFunction, Request, Response } from 'express';
 import { clientValidator } from '../../src/middleware/client-validator.middleware.js';
 
-vi.mock('../../src/services/app.service.js', () => ({
-  appService: {
-    clientMinimumVersion: '2.0.0'
+// The middleware uses Service.API.settings, so we mock the index service
+vi.mock('../../src/services/index.js', () => ({
+  default: {
+    API: {
+      settings: {
+        clientMinimumVersion: '2.0.0'
+      }
+    }
   }
 }));
 
 vi.mock('../../src/utils/logger.js');
 
 describe('clientValidator Middleware', () => {
-  let mockReq: Request;
-  let mockRes: Response;
+  let mockReq: Partial<Request>;
+  let mockRes: Partial<Response>;
   let next: NextFunction;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockReq = { headers: {} } as Request
+    mockReq = { headers: {} };
     mockRes = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis()
-    } as unknown as Response
+    };
     next = vi.fn();
   });
 
   it('should call next() if appclient is not "Organized"', () => {
     mockReq.headers = { appclient: 'WebBrowser', appversion: '1.0.0' };
     
-    clientValidator(mockReq, mockRes, next);
+    clientValidator(mockReq as Request, mockRes as Response, next);
 
     expect(next).toHaveBeenCalled();
     expect(mockRes.status).not.toHaveBeenCalled();
   });
 
-  it('should call next() if version is equal to or greater than minimum', () => {
-    mockReq.headers = { appclient: 'Organized', appversion: '2.0.0' };
-    
-    clientValidator(mockReq, mockRes, next);
+  describe('when appclient is "Organized"', () => {
+    beforeEach(() => {
+      mockReq.headers = { ...mockReq.headers, appclient: 'Organized' };
+    });
 
-    expect(next).toHaveBeenCalled();
-  });
+    it('should call next() if version is equal to minimum', () => {
+      mockReq.headers!.appversion = '2.0.0';
+      clientValidator(mockReq as Request, mockRes as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
 
-  it('should return 426 if version is outdated', () => {
-    mockReq.headers = { appclient: 'Organized', appversion: '1.9.9' };
+    it('should call next() if version is greater than minimum', () => {
+      mockReq.headers!.appversion = '2.1.0';
+      clientValidator(mockReq as Request, mockRes as Response, next);
+      expect(next).toHaveBeenCalled();
+    });
 
-    clientValidator(mockReq, mockRes, next);
+    const expectedError = {
+        success: false,
+        error: expect.objectContaining({
+          code: 'api.client.upgrade_required',
+          minimumVersion: '2.0.0'
+        })
+      };
 
-    expect(mockRes.status).toHaveBeenCalledWith(426);
-    expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
-      success: false,
-      error: expect.objectContaining({
-        code: 'api.client.upgrade_required',
-        minimumVersion: '2.0.0'
-      })
-    }));
-    expect(next).not.toHaveBeenCalled();
-  });
+    it('should return 426 if version is outdated', () => {
+      mockReq.headers!.appversion = '1.9.9';
+      clientValidator(mockReq as Request, mockRes as Response, next);
 
-  it('should handle malformed versions safely', () => {
-    mockReq.headers = { appclient: 'Organized', appversion: 'not-a-version' };
-    
-    clientValidator(mockReq, mockRes, next);
+      expect(mockRes.status).toHaveBeenCalledWith(426);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining(expectedError));
+      expect(next).not.toHaveBeenCalled();
+    });
 
-    expect(mockRes.status).toHaveBeenCalledWith(426);
+    it('should return 426 if appversion header is missing', () => {
+      clientValidator(mockReq as Request, mockRes as Response, next);
+
+      expect(mockRes.status).toHaveBeenCalledWith(426);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining(expectedError));
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('should return 426 for malformed versions', () => {
+      mockReq.headers!.appversion = 'not-a-version';
+      clientValidator(mockReq as Request, mockRes as Response, next);
+
+      expect(mockRes.status).toHaveBeenCalledWith(426);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining(expectedError));
+      expect(next).not.toHaveBeenCalled();
+    });
   });
 });

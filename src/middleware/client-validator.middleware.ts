@@ -4,7 +4,7 @@ import Utility from '../utils/index.js';
 
 /**
  * Middleware to enforce minimum version requirements for the 'Organized' app.
- * Relies on global HeaderSchema validation for initial type/presence checks.
+ * This middleware is designed to be robust and handle cases where headers might be missing.
  */
 export const clientValidator = (
   req: Request,
@@ -14,16 +14,16 @@ export const clientValidator = (
   const appClient = req.headers['appclient'] as string;
   const appVersion = req.headers['appversion'] as string;
 
-  // HeaderSchema already ensures appversion is present if appclient is 'Organized'
   if (appClient === 'Organized') {
-    const isSupported = Utility.Version.isSupported(
+    // First, ensure the appVersion header exists, then check if it is supported.
+    const isSupported = appVersion && Utility.Version.isSupported(
       appVersion,
       Service.API.settings.clientMinimumVersion
     );
 
     if (!isSupported) {
       Utility.Logger.warn(
-        `Rejected outdated client: ${appVersion} (Minimum: ${Service.API.settings.clientMinimumVersion})`
+        `Rejected client with missing or outdated version: ${appVersion} (Minimum: ${Service.API.settings.clientMinimumVersion})`
       );
 
       res.status(426).json({
