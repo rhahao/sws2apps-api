@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import { ZodError } from 'zod';
 import Utility from '../utils/index.js';
 
 /**
@@ -23,17 +24,38 @@ export const errorHandler = (err: Error, _req: Request, res: Response, _next: Ne
 	// Log the full error for server-side auditing
 	Utility.Logger.error('Error occurred:', err);
 
-	const statusCode = err instanceof ApiError ? err.status : 500;
-	const code = err instanceof ApiError ? err.code : 'api.server.internal_error';
+	if (err instanceof ZodError) {
+		res.status(400).json({
+			success: false,
+			error: {
+				message: 'There was an error with your request.',
+				code: 'api.server.validation_error',
+				...(process.env.NODE_ENV === 'development' && { issues: err.issues }),
+			},
+		});
+		return;
+	}
 
-	// In production, we don't leak internal error messages unless they are explicitly set in ApiError
-	const message = err instanceof ApiError || process.env.NODE_ENV === 'development' ? err.message : 'Internal server error';
+	if (err instanceof ApiError) {
+		const message = err.message || 'An error occurred.';
+		res.status(err.status).json({
+			success: false,
+			error: {
+				message,
+				code: err.code,
+				...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+			},
+		});
+		return;
+	}
 
-	res.status(statusCode).json({
+	// Generic error for unhandled cases
+	const message = process.env.NODE_ENV === 'development' ? err.message : 'Internal server error';
+	res.status(500).json({
 		success: false,
 		error: {
 			message,
-			code,
+			code: 'api.server.internal_error',
 			...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
 		},
 	});
