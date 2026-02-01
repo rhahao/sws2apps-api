@@ -1,11 +1,34 @@
 import globals from 'globals';
-import pluginJs from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import vitest from 'eslint-plugin-vitest';
 
-export default [
-	{ files: ['**/*.{js,mjs,cjs,ts}'] },
-	{ languageOptions: { globals: globals.node } },
-	{ ignores: ['**/*.js'] },
-	pluginJs.configs.recommended,
-	...tseslint.configs.recommended,
-];
+export default tseslint.config(
+  {
+    ignores: ['dist', 'node_modules'],
+  },
+  {
+    files: ['**/*.ts'],
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+      vitest,
+    },
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      ...tseslint.configs.recommended.rules,
+      ...vitest.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'warn',
+      'no-console': 'off',
+    },
+  }
+);

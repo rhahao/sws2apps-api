@@ -4,7 +4,7 @@
 		"module": "nodenext",
 		"lib": ["ESNext"],
 		"outDir": "./dist",
-		"rootDir": "./src",
+		"rootDirs": ["src", "tests"],
 		"strict": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
@@ -17,6 +17,6 @@
 		"noImplicitReturns": true,
 		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src/**/*", "tests/utils/sync.test.ts"],
-	"exclude": ["node_modules", "dist", "tests"]
+	"include": ["src/**/*", "tests/**/*.ts", "vitest.config.ts"],
+	"exclude": ["node_modules", "dist"]
 }
