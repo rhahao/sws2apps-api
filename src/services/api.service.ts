@@ -186,7 +186,7 @@ class ApiService {
 
       Utility.Logger.info(`Loaded ${this._flags.length} feature flags`);
     } catch (error) {
-      Utility.Logger.error(`Error loading app service::`, error);
+      Utility.Logger.error(`Error loading app service:`, error);
     }
   }
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import i18next from 'i18next';
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { initI18n } from '../../src/services/index.js';
+import { init } from '../../src/services/i18n.service.js';
 
 vi.mock('node:fs');
 
@@ -26,7 +26,7 @@ describe('i18n Utility', () => {
       JSON.stringify({ tr_welcome: 'Hello' })
     );
 
-    await initI18n();
+    await init();
 
     // 2. Check if i18next.init was called with correctly mapped resources
     const spy = vi.spyOn(i18next, 'init');
@@ -44,6 +44,6 @@ describe('i18n Utility', () => {
     (fs.existsSync as Mock).mockReturnValue(true);
     (fs.readFileSync as Mock).mockReturnValue('invalid-json'); // This will cause JSON.parse to throw
 
-    await expect(initI18n()).rejects.toThrow();
+    await expect(init()).rejects.toThrow();
   });
 });

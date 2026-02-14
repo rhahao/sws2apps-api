@@ -20,8 +20,6 @@ class CongregationServices {
         if (congId) {
           try {
             const cong = new Model.Congregation(congId);
-            // We load details on demand or during full sync if needed
-            // For now, we just index the ID
             this.congregations.set(congId, cong);
           } catch (err) {
             Utility.Logger.error(

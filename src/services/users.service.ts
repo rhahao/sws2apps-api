@@ -9,6 +9,8 @@ import Utility from '../utils/index.js';
 class UserRegistry {
   private users: Map<string, Model.User> = new Map();
   private visitorIndex: Map<string, string> = new Map();
+  private authUsers: Map<string, Model.User> = new Map();
+  private emailUsers: Map<string, Model.User> = new Map();
 
   get count() {
     return Array.from(this.users.values()).filter(
@@ -44,6 +46,7 @@ class UserRegistry {
       const userIds = await Storage.Users.getIds();
 
       this.users.clear();
+      this.authUsers.clear();
 
       // Process in concurrent batches to optimize startup speed
       const CONCURRENCY_LIMIT = 20;
@@ -64,6 +67,14 @@ class UserRegistry {
               await user.load();
 
               this.users.set(userId, user);
+
+              if (user.profile.auth_uid) {
+                this.authUsers.set(user.profile.auth_uid, user);
+              }
+
+              if (user.email) {
+                this.emailUsers.set(user.email, user);
+              }
 
               this.indexUserSessions(user);
             } catch (err) {
@@ -94,11 +105,11 @@ class UserRegistry {
   }
 
   public findByEmail(email: string) {
-    const users = this.users.values();
+    return this.emailUsers.get(email);
+  }
 
-    return users.find(
-      (user) => user.email?.toLowerCase() === email.toLowerCase()
-    );
+  public findByAuthUid(uid: string) {
+    return this.authUsers.get(uid);
   }
 
   public findByVisitorId(visitorId: string) {
@@ -184,7 +195,7 @@ class UserRegistry {
         }
 
         await AuthService.updateUser(auth_uid, {
-          email,
+          email: email.toLowerCase(),
           displayName,
         });
       }
@@ -248,6 +259,15 @@ class UserRegistry {
 
       // 3. Remove from Registry and rebuild Visitor Index
       this.users.delete(userId);
+
+      if (user.profile.auth_uid) {
+        this.authUsers.delete(user.profile.auth_uid);
+      }
+
+      if (user.email) {
+        this.emailUsers.delete(user.email);
+      }
+
       this.rebuildVisitorIndex();
 
       Utility.Logger.info(
@@ -291,9 +311,8 @@ class UserRegistry {
         createdAt: now,
         congregation: {
           id: cong_id,
-          pocket_invitation_code: await Utility.Encryption.encrypt(
-            user_secret_code
-          ),
+          pocket_invitation_code:
+            await Utility.Encryption.encrypt(user_secret_code),
           account_type: 'pocket',
           cong_role,
           user_local_uid: cong_person_uid,
@@ -322,11 +341,9 @@ class UserRegistry {
     const { email, origin } = params;
 
     try {
-      const user = this.findByEmail(email);
+      const user = this.findByEmail(email.toLowerCase());
 
-      const claims: API.GenericObject = {
-        email,
-      };
+      const claims: API.GenericObject = { email };
 
       if (user) {
         claims.uid = user.profile.auth_uid;
@@ -338,7 +355,7 @@ class UserRegistry {
       // Does NOT allow magic login. Requires 'c' (code) to be provided by user.
       const browserHandshake = await Utility.Encryption.encrypt(
         JSON.stringify({
-          e: email,
+          e: email.toLowerCase(),
           c: emailOTP,
           x: expires,
           isMagic: false,
@@ -348,7 +365,7 @@ class UserRegistry {
       // Contains the same data but 'isMagic' is true.
       const emailHandshake = await Utility.Encryption.encrypt(
         JSON.stringify({
-          e: email,
+          e: email.toLowerCase(),
           c: emailOTP,
           x: expires,
           isMagic: true,

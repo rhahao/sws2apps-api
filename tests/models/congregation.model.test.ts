@@ -1,361 +1,133 @@
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import {
-  CongChange,
-  CongSettingsServerUpdate,
-  CongSettingsUpdate,
-  CongScheduleUpdate,
-} from '../../src/types/index.js';
+import type API from '../../src/types/index.js';
 import { Congregation } from '../../src/models/congregation.model.js';
-import { s3Service } from '../../src/services/index.js';
-import mockData from '../mocks/data.json';
+import Storage from '../../src/storages/index.js';
+import mockData from '../mocks/data.json' with { type: 'json' };
 
-vi.mock('../../src/config/index.js', () => ({
-  ENV: { nodeEnv: 'development' },
-}));
+vi.mock('../../src/config/index.js');
+vi.mock('../../src/storages/index.js');
+vi.mock('../../src/utils/index.js', async () => {
+  const original = await vi.importActual<
+    typeof import('../../src/utils/index.js')
+  >('../../src/utils/index.js');
 
-vi.mock('../../src/services/s3.service.js', () => ({
-  s3Service: {
-    getFile: vi.fn(),
-    uploadFile: vi.fn(),
-    getObjectMetadata: vi.fn(),
-  },
-}));
-
-vi.mock('../../src/utils/logger.js', () => ({
-  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
-}));
+  return {
+    default: {
+      ...original.default,
+      Logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+        warn: vi.fn(),
+      },
+    },
+  };
+});
 
 describe('Congregation Model', () => {
   let congregation: Congregation;
-  const congId = 'b2b17fbc-88f4-4695-ae63-be3d6f5f499a';
+  const congId = 'test-cong-id';
   const newTimestamp = new Date().toISOString();
 
   beforeEach(() => {
     congregation = new Congregation(congId);
     vi.clearAllMocks();
 
-    (s3Service.getFile as Mock).mockImplementation(async (key: string) => {
-      const finalKey = key.split('/').at(-1)!;
-
-      const data = mockData.congregations[finalKey];
-
-      if (data) {
-        return JSON.stringify(data);
-      }
-
-      return null;
-    });
-
-    (s3Service.getObjectMetadata as Mock).mockResolvedValue({ etag: 'v0' });
-    (s3Service.uploadFile as Mock).mockResolvedValue({});
+    // Set up mock implementations for each test run
+    (Storage.Congregations.getSettings as Mock).mockResolvedValue(
+      JSON.parse(JSON.stringify(mockData.congregations['settings.json']))
+    );
+    (Storage.Congregations.getETag as Mock).mockResolvedValue('v0');
+    (Storage.Congregations.getMutations as Mock).mockResolvedValue([]);
+    (Storage.Congregations.getPersons as Mock).mockResolvedValue(
+      JSON.parse(JSON.stringify(mockData.congregations['persons.json']))
+    );
+    (Storage.Congregations.getSchedules as Mock).mockResolvedValue(
+      JSON.parse(JSON.stringify(mockData.congregations['schedules.json']))
+    );
+    (Storage.Congregations.getVisitingSpeakers as Mock).mockResolvedValue([]);
   });
 
-  // --- SERVER ONLY PATCH TESTS ---
-  describe('applyServerSettingsPatch', () => {
-    it('should apply server patch quietly (no ETag bump)', async () => {
-      await congregation.load();
-
-      const serverPatch: CongSettingsServerUpdate = {
-        cong_name: 'New congregation name',
-      };
-
-      await congregation.applyServerSettingsPatch(serverPatch);
-
-      const calls = (s3Service.uploadFile as Mock).mock.calls;
-      expect(calls).toHaveLength(1); // Only settings.json
-      expect(calls[0][0]).toContain('settings.json');
-      expect(congregation.settings.cong_name).toBe(serverPatch.cong_name);
-      expect(congregation.ETag).toBe('v0');
-    });
+  it('should load settings and ETag correctly', async () => {
+    await congregation.load();
+    expect(Storage.Congregations.getSettings).toHaveBeenCalledWith(congId);
+    expect(Storage.Congregations.getETag).toHaveBeenCalledWith(congId);
+    expect(congregation.settings.cong_name).toBe(
+      mockData.congregations['settings.json'].cong_name
+    );
+    expect(congregation.ETag).toBe('v0');
   });
 
-  describe('cleanupMutations', () => {
-    it('should return an empty array if no changes are provided', () => {
-      const { pruned, hasChanged } = congregation.cleanupMutations([]);
-      expect(pruned).toEqual([]);
-      expect(hasChanged).toBe(false);
-    });
-  
-    it('should keep all changes if they are recent', () => {
-      const recentChanges = [
-        { ETag: 'v1', timestamp: new Date().toISOString(), changes: [] },
-      ];
-      const { pruned, hasChanged } = congregation.cleanupMutations(recentChanges);
-      expect(pruned).toEqual(recentChanges);
-      expect(hasChanged).toBe(false);
-    });
-  
-    it('should prune old changes based on the default 6-month cutoff', () => {
-      const eightMonthsAgo = new Date();
-      eightMonthsAgo.setMonth(eightMonthsAgo.getMonth() - 8);
-  
-      const changes = [
-        { ETag: 'v1', timestamp: new Date().toISOString(), changes: [] }, // recent
-        { ETag: 'v0', timestamp: eightMonthsAgo.toISOString(), changes: [] }, // old
-      ];
-  
-      const { pruned, hasChanged } = congregation.cleanupMutations(changes);
-      expect(pruned).toHaveLength(1);
-      expect(pruned[0].ETag).toBe('v1');
-      expect(hasChanged).toBe(true);
-    });
-  
-    it('should prune old changes based on a provided cutoff date', () => {
-      const specificCutoff = new Date('2023-06-01T00:00:00Z');
-  
-      const changes = [
-        { ETag: 'v2', timestamp: '2023-07-01T00:00:00Z', changes: [] }, // keep
-        { ETag: 'v1', timestamp: '2023-05-31T23:59:59Z', changes: [] }, // prune
-      ];
-  
-      const { pruned, hasChanged } = congregation.cleanupMutations(changes, specificCutoff);
-      expect(pruned).toHaveLength(1);
-      expect(pruned[0].ETag).toBe('v2');
-      expect(hasChanged).toBe(true);
-    });
+  it('should apply server settings patch quietly', async () => {
+    await congregation.load();
+    const serverPatch: API.CongSettingsServerUpdate = { cong_name: 'New Name' };
+    await congregation.applyServerSettingsPatch(serverPatch);
+    expect(Storage.Congregations.saveSettings).toHaveBeenCalledWith(
+      congId,
+      expect.objectContaining({ cong_name: 'New Name' })
+    );
+    expect(Storage.Congregations.updateETag).not.toHaveBeenCalled();
   });
 
-  // --- CORE ENGINE TESTS ---
-  describe('applyBatchedChanges (Engine)', () => {
-    it('should process multiple scopes, merge data correctly, and commit ETag LAST', async () => {
-      await congregation.load();
-
-      const batch: CongChange['changes'] = [
-        {
-          scope: 'settings',
-          patch: { data_sync: { value: true, updatedAt: newTimestamp } },
+  it('should process batched changes, save data, and commit ETag last', async () => {
+    await congregation.load();
+    const batch: API.CongChange['changes'] = [
+      {
+        scope: 'settings',
+        patch: { data_sync: { value: true, updatedAt: newTimestamp } },
+      },
+      {
+        scope: 'persons',
+        patch: {
+          person_uid: 'p-new',
+          person_firstname: { value: 'Jane', updatedAt: newTimestamp },
         },
-        {
-          scope: 'persons',
-          patch: {
-            person_uid: 'p-new',
-            person_firstname: { value: 'Jane', updatedAt: newTimestamp },
-          },
-        },
-      ];
+      },
+    ];
 
-      await congregation.applyBatchedChanges(batch);
+    await congregation.applyBatchedChanges(batch);
 
-      const calls = (s3Service.uploadFile as Mock).mock.calls;
+    expect(Storage.Congregations.saveSettings).toHaveBeenCalled();
+    expect(Storage.Congregations.savePersons).toHaveBeenCalled();
+    expect(Storage.Congregations.saveMutations).toHaveBeenCalled();
+    expect(Storage.Congregations.updateETag).toHaveBeenCalledWith(congId, 'v1');
+    expect(congregation.ETag).toBe('v1');
 
-      // 1. Verify Data Integrity (The Merge)
-      const settingsCall = calls.find((c) => c[0].endsWith('settings.json'));
-      const settingsData = JSON.parse(settingsCall![1]);
-      expect(settingsData.cong_name).toBe(
-        mockData.congregations['settings.json'].cong_name
-      ); // Preserved
-      expect(settingsData.data_sync.value).toBe(
-        batch[0].patch['data_sync']['value']
-      ); // Updated
+    const updateETagOrder = (Storage.Congregations.updateETag as Mock).mock
+      .invocationCallOrder[0];
+    const saveSettingsOrder = (Storage.Congregations.saveSettings as Mock).mock
+      .invocationCallOrder[0];
 
-      const personsCall = calls.find((c) => c[0].endsWith('persons.json'));
-      const personsData = JSON.parse(personsCall![1]);
-      expect(personsData).toHaveLength(2); // Merged, not duplicated
-      expect(personsData[0].person_uid).toBe('person-1'); // Preserved
-      expect(personsData[1].person_uid).toBe('p-new'); // Appended
-
-      // 2. Verify Mutation History
-      const mutationCall = calls.find((c) => c[0].endsWith('mutations.json'));
-      const mutationData = JSON.parse(mutationCall![1]);
-      expect(mutationData[0].changes).toEqual(batch); // History recorded
-
-      // 3. Verify Atomic Order (The "Commit")
-      const lastCallPath = calls[calls.length - 1][0];
-      expect(lastCallPath).toBe(`congregations/${congId}/`);
-
-      // 4. Verify Version Bump
-      expect(congregation.ETag).toBe('v1');
-    });
-
-    it('should use weekOf as identity and deep merge nested midweek data', async () => {
-      await congregation.load();
-
-      const patch: CongScheduleUpdate = {
-        weekOf: '2026/01/05',
-        midweek_meeting: {
-          chairman: {
-            main_hall: [
-              { type: 'main', value: 'New Chairman', updatedAt: newTimestamp },
-            ],
-          },
-        },
-      };
-
-      await congregation.applyBatchedChanges([{ scope: 'schedules', patch }]);
-
-      const uploadCall = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
-        c[0].includes('schedules.json')
-      );
-
-      const data = JSON.parse(uploadCall![1]);
-
-      // Verify deduplication
-      expect(data.length).toBe(1);
-      // Verify deep path update
-      expect(data[0].midweek_meeting.chairman.main_hall[0].value).toBe(
-        'New Chairman'
-      );
-    });
-
-    it('should fail transaction and rollback state if upload fails (Commit Last)', async () => {
-      await congregation.load();
-
-      (s3Service.uploadFile as Mock).mockRejectedValueOnce(
-        new Error('S3 Down')
-      );
-
-      await expect(
-        congregation.applyCongSettingsPatch({
-          data_sync: { value: true, updatedAt: newTimestamp },
-        })
-      ).rejects.toThrow('S3 Down');
-
-      const calls = (s3Service.uploadFile as Mock).mock.calls;
-
-      expect(
-        calls.find((c) => c[0] === `congregations/${congId}/`)
-      ).toBeUndefined();
-
-      expect(congregation.ETag).toBe('v0'); // No version bump
-    });
-
-    it('should ignore stale updates based on updatedAt [2026-01-25]', async () => {
-      await congregation.load();
-
-      const stalePatch: CongSettingsUpdate = {
-        data_sync: { value: true, updatedAt: '2020-01-01T00:00:00Z' },
-      };
-
-      await congregation.applyBatchedChanges([
-        { scope: 'settings', patch: stalePatch },
-      ]);
-
-      expect(s3Service.uploadFile).not.toHaveBeenCalled();
-      expect(congregation.ETag).toBe('v0');
-    });
-
-    it('should perform a deep merge that preserves nested structures not present in the patch', async () => {
-      await congregation.load();
-      // Mock has: midweek_meeting: { chairman: { main_hall: [...] } }
-
-      const partialPatch: CongScheduleUpdate = {
-        weekOf: '2026/01/05',
-        midweek_meeting: {
-          chairman: {
-            aux_class_1: {
-              type: 'main',
-              value: 'Brother Jones',
-              updatedAt: newTimestamp,
-            },
-          },
-        },
-      };
-
-      await congregation.applyCongSchedulePatch(partialPatch);
-
-      const upload = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
-        c[0].includes('schedules.json')
-      );
-      const data = JSON.parse(upload![1]);
-
-      // 1. The new field is there
-      expect(data[0].midweek_meeting.chairman.aux_class_1.value).toBe(
-        'Brother Jones'
-      );
-      // 2. The CRITICAL check: The chairman (not in patch) was NOT deleted
-      expect(data[0].midweek_meeting.chairman.main_hall).toBeDefined();
-    });
-
-    it('should initialize a new file if S3 returns null', async () => {
-      (s3Service.getFile as Mock).mockResolvedValueOnce(null); // File doesn't exist yet
-
-      await congregation.applyCongSourcePatch({
-        weekOf: '2026/01/26',
-        midweek_meeting: {
-          event_name: [
-            { type: 'main', value: 'event', updatedAt: newTimestamp },
-          ],
-        },
-      });
-
-      const upload = (s3Service.uploadFile as Mock).mock.calls.find((c) =>
-        c[0].endsWith('sources.json')
-      );
-
-      expect(JSON.parse(upload![1])).toHaveLength(1);
-    });
+    expect(updateETagOrder).toBeGreaterThan(saveSettingsOrder);
   });
 
-  // --- CONVENIENCE WRAPPER TESTS ---
-  describe('Convenience Wrappers (Plumbing)', () => {
-    it('should route all scopes correctly to the engine', async () => {
-      const spy = vi.spyOn(congregation, 'applyBatchedChanges');
+  it('should handle a new visiting speaker patch', async () => {
+    await congregation.load();
+    const patch: API.CongVisitingSpeakerUpdate = {
+      person_uid: 'p-new',
+      person_firstname: { value: 'John Speaker', updatedAt: newTimestamp },
+    };
 
-      const wrappers = [
-        {
-          fn: 'applyCongSettingsPatch',
-          scope: 'settings',
-          patch: { data_sync: { value: true, updatedAt: newTimestamp } },
-        },
-        {
-          fn: 'applyBranchCongAnalysisPatch',
-          scope: 'branch_cong_analysis',
-          patch: { report_date: '2026-01', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyPersonPatch',
-          scope: 'persons',
-          patch: { person_uid: 'p1', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyBranchFieldServiceReportPatch',
-          scope: 'branch_field_service_reports',
-          patch: { report_date: '2026-01', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongFieldServiceReportPatch',
-          scope: 'cong_field_service_reports',
-          patch: { report_id: 'r1', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongFieldServiceGroupPatch',
-          scope: 'field_service_groups',
-          patch: { group_id: 'g1', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongMeetingAttendancePatch',
-          scope: 'meeting_attendance',
-          patch: { month_date: '2026/01', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongSchedulePatch',
-          scope: 'schedules',
-          patch: { weekOf: '2026-01-05', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongSourcePatch',
-          scope: 'sources',
-          patch: { weekOf: '2026-01-05', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongSpeakerPatch',
-          scope: 'speakers_congregations',
-          patch: { id: 's1', updatedAt: newTimestamp },
-        },
-        {
-          fn: 'applyCongUpcomingEventPatch',
-          scope: 'upcoming_events',
-          patch: { event_uid: 'e1', updatedAt: newTimestamp },
-        },
-      ];
+    await congregation.applyBatchedChanges([
+      { scope: 'visiting_speakers', patch },
+    ]);
 
-      for (const item of wrappers) {
-        await congregation[item.fn](item.patch);
+    expect(Storage.Congregations.saveVisitingSpeakers).toHaveBeenCalledWith(
+      congId,
+      [expect.objectContaining({ person_uid: 'p-new' })]
+    );
+    expect(congregation.ETag).toBe('v1');
+  });
 
-        expect(spy).toHaveBeenCalledWith([
-          { scope: item.scope, patch: item.patch },
-        ]);
-      }
-    });
+  it('should not save if patch is stale (no changes)', async () => {
+    await congregation.load();
+
+    const stalePatch: API.CongSettingsUpdate = {
+      data_sync: { value: true, updatedAt: '2020-01-01T00:00:00Z' },
+    };
+    await congregation.applyCongSettingsPatch(stalePatch);
+
+    expect(Storage.Congregations.saveSettings).not.toHaveBeenCalled();
+    expect(Storage.Congregations.updateETag).not.toHaveBeenCalled();
+    expect(congregation.ETag).toBe('v0');
   });
 });

@@ -514,6 +514,36 @@ export class Congregation {
     return { hasChanges, data: events };
   }
 
+  private async handleVisitingSpeakersPatch(
+    patch: API.CongVisitingSpeakerUpdate,
+    context: API.CongPatchContext
+  ) {
+    if (!context.finalVisitingSpeakers) {
+      context.finalVisitingSpeakers = await Storage.Congregations.getVisitingSpeakers(this._id);
+    }
+
+    const speakers = context.finalVisitingSpeakers || [];
+    const personId = patch.person_uid;
+
+    if (!personId) return { hasChanges: false, data: speakers };
+
+    const speakerIndex = speakers.findIndex((s) => s.person_uid === personId);
+
+    const currentSpeaker = speakerIndex !== -1 ? speakers[speakerIndex] : ({ person_uid: personId } as API.CongVisitingSpeaker);
+
+    const { merged, hasChanges } = Utility.Sync.deepMerge(currentSpeaker, patch);
+
+    if (hasChanges) {
+      if (speakerIndex !== -1) {
+        speakers[speakerIndex] = merged;
+      } else {
+        speakers.push(merged);
+      }
+    }
+
+    return { hasChanges, data: speakers };
+  }
+
   // --- Public Method ---
   public async load() {
     try {
@@ -593,7 +623,8 @@ export class Congregation {
         | API.CongSchedule[]
         | API.CongSource[]
         | API.CongSpeaker[]
-        | API.CongUpcomingEvent[];
+        | API.CongUpcomingEvent[]
+        | API.CongVisitingSpeaker[];
 
       const recordedMutations: API.CongChange['changes'] = [];
 
@@ -611,6 +642,7 @@ export class Congregation {
         finalSources: undefined,
         finalSpeakersCongregations: undefined,
         finalUpcomingEvents: undefined,
+        finalVisitingSpeakers: undefined,
       };
 
       for (const change of changes) {
@@ -677,6 +709,10 @@ export class Congregation {
               change.patch,
               context
             );
+            break;
+          }
+          case 'visiting_speakers': {
+            result = await this.handleVisitingSpeakersPatch(change.patch, context);
             break;
           }
         }
@@ -769,5 +805,9 @@ export class Congregation {
 
   public async applyCongUpcomingEventPatch(patch: API.CongUpcomingEventUpdate) {
     return this.applyBatchedChanges([{ scope: 'upcoming_events', patch }]);
+  }
+
+  public async applyVisitingSpeakerPatch(patch: API.CongVisitingSpeakerUpdate) {
+    return this.applyBatchedChanges([{ scope: 'visiting_speakers', patch }]);
   }
 }

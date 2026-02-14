@@ -6,7 +6,7 @@ import Validator from '../validators/index.js';
 
 export const verifyToken = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -25,8 +25,45 @@ export const verifyToken = async (
     const token = headerResult.data.split(' ')[1];
     const decodedToken = await Service.Auth.verifyToken(token);
 
-    // Attach the typed, validated data
-    req.user = decodedToken;
+    if (!decodedToken) {
+      throw new ApiError(
+        403,
+        'api.auth.unauthorized',
+        'No token provided or malformed'
+      );
+    }
+
+    const visitorid = req.signedCookies.visitorid;
+
+    if (!visitorid) {
+      throw new ApiError(
+        403,
+        'api.auth.session_revoked',
+        'user session revoked'
+      );
+    }
+
+    const user = Service.Users.findByAuthUid(decodedToken.uid);
+
+    if (!user) {
+      throw new ApiError(403, 'api.auth.not_found', 'user account not found');
+    }
+
+    const findSession = user.sessions.find(
+      (session) => session.visitorid === visitorid
+    );
+
+    if (!findSession) {
+      res.clearCookie('visitorid');
+
+      throw new ApiError(
+        403,
+        'api.auth.session_revoked',
+        'user session revoked'
+      );
+    }
+
+    req.user = user;
 
     next();
   } catch (error: unknown) {

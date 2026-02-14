@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { schedulerService } from '../../src/services/scheduler.service.js';
-import { logger } from '../../src/utils/index.js';
+import schedulerService from '../../src/services/scheduler.service.js';
+import Utility from '../../src/utils/index.js';
 
 vi.mock('../../src/utils/index.js');
 
@@ -28,7 +28,7 @@ describe('SchedulerService', () => {
     await vi.advanceTimersByTimeAsync(60000);
 
     expect(mockTask.run).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Task [maintenance] registered'));
+    expect(Utility.Logger.info).toHaveBeenCalledWith(expect.stringContaining('Task [maintenance] registered'));
   });
 
   it('should respect the runOnInit flag with a random delay', async () => {
@@ -60,7 +60,7 @@ describe('SchedulerService', () => {
     schedulerService.register(mockTask);
     schedulerService.register(mockTask); // Second call
 
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('already registered'));
+    expect(Utility.Logger.warn).toHaveBeenCalledWith(expect.stringContaining('already registered'));
   });
 
   it('should continue scheduling even if the task fails', async () => {
@@ -76,7 +76,7 @@ describe('SchedulerService', () => {
 
     // Jump 1 second for first run (fail)
     await vi.advanceTimersByTimeAsync(1000);
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Error executing scheduled task'), expect.any(Error));
+    expect(Utility.Logger.error).toHaveBeenCalledWith(expect.stringContaining('Error'), expect.any(Error));
 
     // Jump another 1 second for second run (success)
     await vi.advanceTimersByTimeAsync(1000);

@@ -39,7 +39,7 @@ export interface RequestSchemas<
   Body = unknown,
   Query = unknown,
   Params = unknown,
-  Headers = unknown
+  Headers = unknown,
 > {
   body?: ZodType<Body>;
   query?: ZodType<Query>;
@@ -49,4 +49,15 @@ export interface RequestSchemas<
 
 export interface Settings {
   clientMinimumVersion: string;
+}
+
+export interface VisitorDetails {
+  browser: string;
+  os: string;
+  ip: string;
+  isMobile: boolean;
+  ipLocation: {
+    country: string;
+    city: string;
+  };
 }
