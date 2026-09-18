@@ -45,7 +45,7 @@ jobs:
         id: semantic
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npx semantic-release
+        run: npx --package semantic-release@25 --package @semantic-release/changelog --package @semantic-release/exec --package @semantic-release/git semantic-release
 
       - name: Install Koyeb CLI
         run: |
